@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"runtime/debug"
 	"runtime/pprof"
 
 	"github.com/spf13/cobra"
@@ -30,10 +31,12 @@ var (
 	helpFilterFlag      bool
 )
 
+var buildInfo, _ = debug.ReadBuildInfo()
+
 var rootCmd = &cobra.Command{
 	Use:     "kojirou [flags..] <identifier>",
 	Short:   "Generate Kindle-compatible e-books from MangaDex",
-	Version: "0.1",
+	Version: buildInfo.Main.Version,
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
