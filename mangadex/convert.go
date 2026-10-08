@@ -41,7 +41,6 @@ func convertChapters(ca []api.ChapterData, groupMap map[string]api.GroupData) Ch
 			Info: ChapterInfo{
 				Title:            info.Attributes.Title,
 				Language:         lang,
-				Views:            0, // FIXME
 				GroupNames:       groups,
 				Published:        info.Attributes.PublishAt,
 				ID:               info.ID,

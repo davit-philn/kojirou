@@ -55,23 +55,6 @@ func SortByNewestGroup(cl md.ChapterList) md.ChapterList {
 	})
 }
 
-func SortByViews(cl md.ChapterList) md.ChapterList {
-	return cl.SortBy(func(a, b md.ChapterInfo) bool {
-		return a.Views > b.Views
-	})
-}
-
-func SortByGroupViews(cl md.ChapterList) md.ChapterList {
-	groupRanking := make(map[string]int)
-	for _, ci := range cl {
-		groupRanking[gid(ci.Info)] += ci.Info.Views
-	}
-
-	return cl.SortBy(func(a, b md.ChapterInfo) bool {
-		return groupRanking[gid(a)] > groupRanking[gid(b)]
-	})
-}
-
 func SortByMost(cl md.ChapterList) md.ChapterList {
 	groupRanking := make(map[string]int)
 	for _, ci := range cl {

@@ -106,11 +106,7 @@ Prefer chapters by groups with the most uploaded chapters.
   newest-total:
 Prefer chapters by groups with the newest upload.
   newest:
-Prefer chapters that have been uploaded most recently.
-  views-total:
-Prefer chapters by groups with the most total views.
-  views:
-Prefer chapters with the most views.`,
+Prefer chapters that have been uploaded most recently.`,
 }
 
 var helpFilterCmd = &cobra.Command{

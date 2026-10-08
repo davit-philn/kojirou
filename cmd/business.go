@@ -180,10 +180,6 @@ func filterAndSortFromFlags(cl md.ChapterList) (md.ChapterList, error) {
 		cl = filter.SortByNewest(cl)
 	case "newest-total":
 		cl = filter.SortByNewestGroup(cl)
-	case "views":
-		cl = filter.SortByViews(cl)
-	case "views-total":
-		cl = filter.SortByGroupViews(cl)
 	case "most":
 		cl = filter.SortByMost(cl)
 	default:
