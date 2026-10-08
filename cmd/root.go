@@ -18,6 +18,7 @@ var (
 	autocropArg         bool
 	widepageArg         WidepagePolicyArg
 	formatArg           FormatArg = FormatMOBI
+	sourceConfigArg     string
 	jpegQualityArg      int
 	losslessArg         bool
 	kindleFolderModeArg bool
@@ -180,6 +181,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&rankArg, "rank", "r", "most", "chapter ranking method to use")
 	rootCmd.Flags().BoolVarP(&autocropArg, "autocrop", "a", false, "crop whitespace from pages automatically")
 	rootCmd.Flags().VarP(&widepageArg, "widepage", "w", "split wide pages automatically")
+	rootCmd.Flags().StringVar(&sourceConfigArg, "source-config", "", "JSON file describing a CSS-selector source; <identifier> is then the series page URL")
 	rootCmd.Flags().Var(&formatArg, "format", "output format: mobi or cbz")
 	rootCmd.Flags().IntVar(&jpegQualityArg, "jpeg-quality", cbz.DefaultJPEGQuality, "JPEG quality (1-100) for cbz output")
 	rootCmd.Flags().BoolVar(&losslessArg, "lossless", false, "store pages as PNG in cbz output")

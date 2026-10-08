@@ -9,19 +9,23 @@ import (
 	"github.com/leotaku/kojirou/cmd/formats"
 	"github.com/leotaku/kojirou/cmd/formats/cbz"
 	"github.com/leotaku/kojirou/cmd/formats/disk"
-	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
 	md "github.com/leotaku/kojirou/mangadex"
 	"golang.org/x/text/language"
 )
 
 func run(ctx context.Context) error {
-	manga, err := download.MangadexSkeleton(ctx, identifierArg)
+	src, err := newContentSource()
+	if err != nil {
+		return fmt.Errorf("source: %w", err)
+	}
+
+	manga, err := src.Skeleton(ctx, identifierArg)
 	if err != nil {
 		return fmt.Errorf("skeleton: %w", err)
 	}
 
-	chapters, err := getChapters(ctx, *manga)
+	chapters, err := getChapters(ctx, src, *manga)
 	if err != nil {
 		return fmt.Errorf("chapters: %w", err)
 	}
@@ -32,7 +36,7 @@ func run(ctx context.Context) error {
 		return nil
 	}
 
-	covers, err := getCovers(ctx, manga)
+	covers, err := getCovers(ctx, src, manga)
 	if err != nil {
 		return fmt.Errorf("covers: %w", err)
 	}
@@ -54,7 +58,7 @@ func run(ctx context.Context) error {
 		dir = newMOBIWriter(outArg, manga.Info.Title)
 	}
 	for _, volume := range manga.Sorted() {
-		if err := handleVolume(ctx, *manga, volume, dir); err != nil {
+		if err := handleVolume(ctx, src, *manga, volume, dir); err != nil {
 			return fmt.Errorf("volume %v: %w", volume.Info.Identifier, err)
 		}
 	}
@@ -62,14 +66,14 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-func handleVolume(ctx context.Context, skeleton md.Manga, volume md.Volume, dir volumeWriter) error {
+func handleVolume(ctx context.Context, src contentSource, skeleton md.Manga, volume md.Volume, dir volumeWriter) error {
 	p := formats.TitledProgress(fmt.Sprintf("Volume: %v", volume.Info.Identifier))
 	if dir.Has(volume.Info.Identifier) && !forceArg {
 		p.Cancel("Skipped")
 		return nil
 	}
 
-	pages, err := getPages(ctx, volume, p)
+	pages, err := getPages(ctx, src, volume, p)
 	if err != nil {
 		return fmt.Errorf("pages: %w", err)
 	}
@@ -86,10 +90,10 @@ func handleVolume(ctx context.Context, skeleton md.Manga, volume md.Volume, dir 
 	return nil
 }
 
-func getChapters(ctx context.Context, manga md.Manga) (md.ChapterList, error) {
-	chapters, err := download.MangadexChapters(ctx, manga.Info.ID)
+func getChapters(ctx context.Context, src contentSource, manga md.Manga) (md.ChapterList, error) {
+	chapters, err := src.Chapters(ctx, manga.Info.ID)
 	if err != nil {
-		return nil, fmt.Errorf("mangadex: %w", err)
+		return nil, fmt.Errorf("%v: %w", src.Name(), err)
 	}
 
 	if diskArg != "" {
@@ -118,12 +122,12 @@ func getChapters(ctx context.Context, manga md.Manga) (md.ChapterList, error) {
 	return filter.RemoveDuplicates(chapters), nil
 }
 
-func getCovers(ctx context.Context, manga *md.Manga) (md.ImageList, error) {
+func getCovers(ctx context.Context, src contentSource, manga *md.Manga) (md.ImageList, error) {
 	p := formats.VanishingProgress("Covers")
-	covers, err := download.MangadexCovers(ctx, manga, p)
+	covers, err := src.Covers(ctx, manga, p)
 	if err != nil {
 		p.Cancel("Error")
-		return nil, fmt.Errorf("mangadex: %w", err)
+		return nil, fmt.Errorf("%v: %w", src.Name(), err)
 	}
 	p.Done()
 
@@ -144,13 +148,13 @@ func getCovers(ctx context.Context, manga *md.Manga) (md.ImageList, error) {
 	return covers, nil
 }
 
-func getPages(ctx context.Context, volume md.Volume, p formats.CliProgress) (md.ImageList, error) {
-	mangadexPages, err := download.MangadexPages(ctx, volume.Sorted().FilterBy(func(ci md.ChapterInfo) bool {
+func getPages(ctx context.Context, src contentSource, volume md.Volume, p formats.CliProgress) (md.ImageList, error) {
+	remotePages, err := src.Pages(ctx, volume.Sorted().FilterBy(func(ci md.ChapterInfo) bool {
 		return ci.GroupNames.String() != "Filesystem"
-	}), download.DataSaverPolicy(dataSaverArg), p)
+	}), p)
 	if err != nil {
 		p.Cancel("Error")
-		return nil, fmt.Errorf("mangadex: %w", err)
+		return nil, fmt.Errorf("%v: %w", src.Name(), err)
 	}
 	diskPages, err := disk.LoadPages(volume.Sorted().FilterBy(func(ci md.ChapterInfo) bool {
 		return ci.GroupNames.String() == "Filesystem"
@@ -161,7 +165,7 @@ func getPages(ctx context.Context, volume md.Volume, p formats.CliProgress) (md.
 	}
 	p.Done()
 
-	return append(mangadexPages, diskPages...), nil
+	return append(remotePages, diskPages...), nil
 }
 
 func filterAndSortFromFlags(cl md.ChapterList) (md.ChapterList, error) {

@@ -139,6 +139,43 @@ Kojirou can be configured to fall back on reencoded lower-quality versions of th
 kojirou d86cf65b-5f6c-437d-a0af-19a31f94ec55 -l en --data-saver=fallback
 ```
 
+## Custom sources
+
+Besides MangaDex, Kojirou can read chapters from a website described by a JSON file of CSS selectors.
+Pass the file with `--source-config`; the `<identifier>` argument is then the URL of the series page that lists the chapters.
+Only point this at sites whose terms allow automated access.
+
+``` json
+{
+  "base_url": "https://example.org",
+  "user_agent": "kojirou",
+  "referer": "https://example.org/",
+  "chapter_list_selector": ".chapters a",
+  "image_list_selector": "#reader img",
+  "image_attr": "data-original",
+  "title": "My Series",
+  "chapters_per_volume": 20,
+  "max_concurrent_downloads": 4
+}
+```
+
+``` shell
+kojirou https://example.org/series/my-series -l en --source-config source.json --format cbz
+```
+
++ `chapter_list_selector` :: Selects one element per chapter, which must be (or contain) a link
++ `image_list_selector` :: Selects one element per page image on a chapter page
++ `image_attr` :: Attribute holding the image URL, e.g. `src` (default) or `data-original`
++ `title` :: Series title for output files (default: last part of the series URL)
++ `chapters_per_volume` :: Group chapters into volumes of this size (default: a single volume)
++ `max_concurrent_downloads` :: Parallel image downloads, 1 to 8 (default: 4)
++ `timeout_seconds` :: Timeout per request (default: 30)
+
+Chapter numbers are taken from the first number in each chapter title.
+Pages are downloaded a few at a time and retried with backoff on HTTP 429 and 5xx responses.
+Only plain HTML is read, so sites that load images with JavaScript are not supported, and there are no covers.
+`--data-saver` has no effect on custom sources.
+
 ## Prebuilt binaries
 
 Prebuilt binaries for Linux, Windows and MacOS on x86 and ARM processors are provided.

@@ -18,6 +18,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/andybalholm/cascadia"
+	"github.com/leotaku/kojirou/cmd/formats"
 )
 
 const (
@@ -44,13 +45,22 @@ type SourceConfig struct {
 
 	// TimeoutSeconds bounds each HTTP request. Defaults to 30.
 	TimeoutSeconds int `json:"timeout_seconds"`
+
+	// Title is the series title used for output files. Defaults to the last
+	// path segment of the series URL.
+	Title string `json:"title"`
+	// ChaptersPerVolume groups chapters into volumes of this size. Zero puts
+	// every chapter into volume 1.
+	ChaptersPerVolume int `json:"chapters_per_volume"`
+	// MaxConcurrentDownloads bounds parallel image downloads, to stay clear
+	// of rate limits. Defaults to 4, at most 8.
+	MaxConcurrentDownloads int `json:"max_concurrent_downloads"`
 }
 
 // Chapter is a single entry of a chapter list.
-type Chapter struct {
-	Title string
-	URL   string
-}
+type Chapter = formats.Chapter
+
+var _ formats.Source = (*Source)(nil)
 
 // NewClient returns an HTTP client with the configured timeout that sends
 // the configured User-Agent and Referer on every request. It can also be
