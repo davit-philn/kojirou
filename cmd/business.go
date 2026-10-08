@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"image"
 
 	"github.com/leotaku/kojirou/cmd/filter"
 	"github.com/leotaku/kojirou/cmd/formats"
+	"github.com/leotaku/kojirou/cmd/formats/cbz"
 	"github.com/leotaku/kojirou/cmd/formats/disk"
 	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
@@ -12,13 +15,13 @@ import (
 	"golang.org/x/text/language"
 )
 
-func run() error {
-	manga, err := download.MangadexSkeleton(identifierArg)
+func run(ctx context.Context) error {
+	manga, err := download.MangadexSkeleton(ctx, identifierArg)
 	if err != nil {
 		return fmt.Errorf("skeleton: %w", err)
 	}
 
-	chapters, err := getChapters(*manga)
+	chapters, err := getChapters(ctx, *manga)
 	if err != nil {
 		return fmt.Errorf("chapters: %w", err)
 	}
@@ -29,15 +32,29 @@ func run() error {
 		return nil
 	}
 
-	covers, err := getCovers(manga)
+	covers, err := getCovers(ctx, manga)
 	if err != nil {
 		return fmt.Errorf("covers: %w", err)
 	}
 	*manga = manga.WithCovers(covers)
 
-	dir := kindle.NewNormalizedDirectory(outArg, manga.Info.Title, kindleFolderModeArg)
+	if formatArg == FormatCBZ && kindleFolderModeArg {
+		return fmt.Errorf("--kindle-folder-mode is not supported with --format=cbz")
+	}
+
+	if jpegQualityArg < 1 || jpegQualityArg > 100 {
+		return fmt.Errorf("--jpeg-quality must be between 1 and 100")
+	}
+
+	var dir volumeWriter
+	switch formatArg {
+	case FormatCBZ:
+		dir = newCBZWriter(outArg, manga.Info.Title)
+	default:
+		dir = newMOBIWriter(outArg, manga.Info.Title)
+	}
 	for _, volume := range manga.Sorted() {
-		if err := handleVolume(*manga, volume, dir); err != nil {
+		if err := handleVolume(ctx, *manga, volume, dir); err != nil {
 			return fmt.Errorf("volume %v: %w", volume.Info.Identifier, err)
 		}
 	}
@@ -45,33 +62,22 @@ func run() error {
 	return nil
 }
 
-func handleVolume(skeleton md.Manga, volume md.Volume, dir kindle.NormalizedDirectory) error {
+func handleVolume(ctx context.Context, skeleton md.Manga, volume md.Volume, dir volumeWriter) error {
 	p := formats.TitledProgress(fmt.Sprintf("Volume: %v", volume.Info.Identifier))
 	if dir.Has(volume.Info.Identifier) && !forceArg {
 		p.Cancel("Skipped")
 		return nil
 	}
 
-	pages, err := getPages(volume, p)
+	pages, err := getPages(ctx, volume, p)
 	if err != nil {
 		return fmt.Errorf("pages: %w", err)
 	}
 
 	mangaForVolume := skeleton.WithChapters(volume.Sorted()).WithPages(pages)
-	mobi := kindle.GenerateMOBI(
-		mangaForVolume,
-		kindle.WidepagePolicy(widepageArg),
-		autocropArg,
-		leftToRightArg,
-	)
-	mobi.RightToLeft = !leftToRightArg
-	mobi.Title = fmt.Sprintf("%v: %v",
-		skeleton.Info.Title,
-		volume.Info.Identifier.StringFilled(fillVolumeNumberArg, 0, false),
-	)
 
 	p = formats.VanishingProgress("Writing...")
-	if err := dir.Write(volume.Info.Identifier, mobi, p); err != nil {
+	if err := dir.Write(volume.Info.Identifier, mangaForVolume, volume, p); err != nil {
 		p.Cancel("Error")
 		return fmt.Errorf("write: %w", err)
 	}
@@ -80,8 +86,8 @@ func handleVolume(skeleton md.Manga, volume md.Volume, dir kindle.NormalizedDire
 	return nil
 }
 
-func getChapters(manga md.Manga) (md.ChapterList, error) {
-	chapters, err := download.MangadexChapters(manga.Info.ID)
+func getChapters(ctx context.Context, manga md.Manga) (md.ChapterList, error) {
+	chapters, err := download.MangadexChapters(ctx, manga.Info.ID)
 	if err != nil {
 		return nil, fmt.Errorf("mangadex: %w", err)
 	}
@@ -112,9 +118,9 @@ func getChapters(manga md.Manga) (md.ChapterList, error) {
 	return filter.RemoveDuplicates(chapters), nil
 }
 
-func getCovers(manga *md.Manga) (md.ImageList, error) {
+func getCovers(ctx context.Context, manga *md.Manga) (md.ImageList, error) {
 	p := formats.VanishingProgress("Covers")
-	covers, err := download.MangadexCovers(manga, p)
+	covers, err := download.MangadexCovers(ctx, manga, p)
 	if err != nil {
 		p.Cancel("Error")
 		return nil, fmt.Errorf("mangadex: %w", err)
@@ -138,8 +144,8 @@ func getCovers(manga *md.Manga) (md.ImageList, error) {
 	return covers, nil
 }
 
-func getPages(volume md.Volume, p formats.CliProgress) (md.ImageList, error) {
-	mangadexPages, err := download.MangadexPages(volume.Sorted().FilterBy(func(ci md.ChapterInfo) bool {
+func getPages(ctx context.Context, volume md.Volume, p formats.CliProgress) (md.ImageList, error) {
+	mangadexPages, err := download.MangadexPages(ctx, volume.Sorted().FilterBy(func(ci md.ChapterInfo) bool {
 		return ci.GroupNames.String() != "Filesystem"
 	}), download.DataSaverPolicy(dataSaverArg), p)
 	if err != nil {
@@ -180,10 +186,6 @@ func filterAndSortFromFlags(cl md.ChapterList) (md.ChapterList, error) {
 		cl = filter.SortByNewest(cl)
 	case "newest-total":
 		cl = filter.SortByNewestGroup(cl)
-	case "views":
-		cl = filter.SortByViews(cl)
-	case "views-total":
-		cl = filter.SortByGroupViews(cl)
 	case "most":
 		cl = filter.SortByMost(cl)
 	default:
@@ -191,4 +193,61 @@ func filterAndSortFromFlags(cl md.ChapterList) (md.ChapterList, error) {
 	}
 
 	return cl, nil
+}
+
+// volumeWriter abstracts over the supported output formats.
+type volumeWriter interface {
+	Has(md.Identifier) bool
+	Write(id md.Identifier, manga md.Manga, volume md.Volume, p formats.Progress) error
+}
+
+type mobiWriter struct {
+	dir kindle.NormalizedDirectory
+}
+
+func newMOBIWriter(out, title string) *mobiWriter {
+	return &mobiWriter{kindle.NewNormalizedDirectory(out, title, kindleFolderModeArg)}
+}
+
+func (w *mobiWriter) Has(id md.Identifier) bool {
+	return w.dir.Has(id)
+}
+
+func (w *mobiWriter) Write(id md.Identifier, manga md.Manga, volume md.Volume, p formats.Progress) error {
+	book := kindle.GenerateMOBI(
+		manga,
+		kindle.WidepagePolicy(widepageArg),
+		autocropArg,
+		leftToRightArg,
+	)
+	book.RightToLeft = !leftToRightArg
+	book.Title = fmt.Sprintf("%v: %v",
+		manga.Info.Title,
+		volume.Info.Identifier.StringFilled(fillVolumeNumberArg, 0, false),
+	)
+
+	return w.dir.Write(id, book, p)
+}
+
+type cbzWriter struct {
+	dir cbz.Directory
+}
+
+func newCBZWriter(out, title string) *cbzWriter {
+	return &cbzWriter{cbz.NewDirectory(out, title)}
+}
+
+func (w *cbzWriter) Has(id md.Identifier) bool {
+	return w.dir.Has(id)
+}
+
+func (w *cbzWriter) Write(id md.Identifier, manga md.Manga, _ md.Volume, p formats.Progress) error {
+	return w.dir.Write(id, manga, cbz.Options{
+		Process: func(img image.Image) []image.Image {
+			return kindle.CropAndSplit(img, kindle.WidepagePolicy(widepageArg), autocropArg, leftToRightArg)
+		},
+		RightToLeft: !leftToRightArg,
+		JPEGQuality: jpegQualityArg,
+		Lossless:    losslessArg,
+	}, p)
 }

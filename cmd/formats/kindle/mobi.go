@@ -43,7 +43,7 @@ func GenerateMOBI(manga mangadex.Manga, widepage WidepagePolicy, crop bool, ltr 
 			groupNames = append(groupNames, chap.Info.GroupNames...)
 			pages := make([]string, 0)
 			for _, img := range chap.Sorted() {
-				images = append(images, cropAndSplit(img, widepage, crop, ltr)...)
+				images = append(images, CropAndSplit(img, widepage, crop, ltr)...)
 				pages = append(pages, templateToString(pageTemplate, records.To32(pageImageIndex)))
 				pageImageIndex++
 			}

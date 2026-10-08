@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"runtime/pprof"
 
+	"github.com/leotaku/kojirou/cmd/formats/cbz"
 	"github.com/spf13/cobra"
 )
 
@@ -14,6 +17,9 @@ var (
 	rankArg             string
 	autocropArg         bool
 	widepageArg         WidepagePolicyArg
+	formatArg           FormatArg = FormatMOBI
+	jpegQualityArg      int
+	losslessArg         bool
 	kindleFolderModeArg bool
 	dryRunArg           bool
 	outArg              string
@@ -42,7 +48,7 @@ var rootCmd = &cobra.Command{
 		cmd.SilenceUsage = true
 		identifierArg = args[0]
 
-		return run()
+		return run(cmd.Context())
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if cpuprofileArg != "" {
@@ -106,11 +112,7 @@ Prefer chapters by groups with the most uploaded chapters.
   newest-total:
 Prefer chapters by groups with the newest upload.
   newest:
-Prefer chapters that have been uploaded most recently.
-  views-total:
-Prefer chapters by groups with the most total views.
-  views:
-Prefer chapters with the most views.`,
+Prefer chapters that have been uploaded most recently.`,
 }
 
 var helpFilterCmd = &cobra.Command{
@@ -160,11 +162,15 @@ given.  It accepts the format of BCP 47 language tags.`,
 }
 
 func Execute() {
+	// Cancel in-flight downloads on interrupt instead of dying mid-write.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	if helpRankingFlag {
 		helpRankingCmd.Help() //nolint:errcheck
 	} else if helpFilterFlag {
 		helpFilterCmd.Help() //nolint:errcheck
-	} else if err := rootCmd.Execute(); err != nil {
+	} else if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
@@ -174,6 +180,9 @@ func init() {
 	rootCmd.Flags().StringVarP(&rankArg, "rank", "r", "most", "chapter ranking method to use")
 	rootCmd.Flags().BoolVarP(&autocropArg, "autocrop", "a", false, "crop whitespace from pages automatically")
 	rootCmd.Flags().VarP(&widepageArg, "widepage", "w", "split wide pages automatically")
+	rootCmd.Flags().Var(&formatArg, "format", "output format: mobi or cbz")
+	rootCmd.Flags().IntVar(&jpegQualityArg, "jpeg-quality", cbz.DefaultJPEGQuality, "JPEG quality (1-100) for cbz output")
+	rootCmd.Flags().BoolVar(&losslessArg, "lossless", false, "store pages as PNG in cbz output")
 	rootCmd.Flags().BoolVarP(&kindleFolderModeArg, "kindle-folder-mode", "k", false, "generate folder structure for Kindle devices")
 	rootCmd.Flags().BoolVarP(&leftToRightArg, "left-to-right", "p", false, "make reading direction left to right")
 	rootCmd.Flags().IntVarP(&fillVolumeNumberArg, "fill-volume-number", "n", 0, "fill volume number with leading zeros in title")

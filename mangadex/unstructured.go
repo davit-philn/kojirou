@@ -20,7 +20,6 @@ type VolumeInfo struct {
 
 type ChapterInfo struct {
 	Title      string
-	Views      int
 	Language   language.Tag
 	GroupNames multiple
 	Published  time.Time
