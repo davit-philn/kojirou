@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"runtime/pprof"
 
+	"github.com/leotaku/kojirou/cmd/formats/cbz"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,8 @@ var (
 	autocropArg         bool
 	widepageArg         WidepagePolicyArg
 	formatArg           FormatArg = FormatMOBI
+	jpegQualityArg      int
+	losslessArg         bool
 	kindleFolderModeArg bool
 	dryRunArg           bool
 	outArg              string
@@ -178,6 +181,8 @@ func init() {
 	rootCmd.Flags().BoolVarP(&autocropArg, "autocrop", "a", false, "crop whitespace from pages automatically")
 	rootCmd.Flags().VarP(&widepageArg, "widepage", "w", "split wide pages automatically")
 	rootCmd.Flags().Var(&formatArg, "format", "output format: mobi or cbz")
+	rootCmd.Flags().IntVar(&jpegQualityArg, "jpeg-quality", cbz.DefaultJPEGQuality, "JPEG quality (1-100) for cbz output")
+	rootCmd.Flags().BoolVar(&losslessArg, "lossless", false, "store pages as PNG in cbz output")
 	rootCmd.Flags().BoolVarP(&kindleFolderModeArg, "kindle-folder-mode", "k", false, "generate folder structure for Kindle devices")
 	rootCmd.Flags().BoolVarP(&leftToRightArg, "left-to-right", "p", false, "make reading direction left to right")
 	rootCmd.Flags().IntVarP(&fillVolumeNumberArg, "fill-volume-number", "n", 0, "fill volume number with leading zeros in title")

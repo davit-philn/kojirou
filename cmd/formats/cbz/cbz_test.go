@@ -101,6 +101,69 @@ func TestGenerateProcessSplitsPages(t *testing.T) {
 	}
 }
 
+func TestGenerateEncoding(t *testing.T) {
+	tests := []struct {
+		name  string
+		opts  Options
+		ext   string
+		magic []byte
+	}{
+		{"default jpeg", Options{}, ".jpg", []byte{0xff, 0xd8}},
+		{"custom quality", Options{JPEGQuality: 30}, ".jpg", []byte{0xff, 0xd8}},
+		{"lossless png", Options{Lossless: true, JPEGQuality: 30}, ".png", []byte("\x89PNG")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := new(bytes.Buffer)
+			if err := Generate(buf, testManga(), tt.opts); err != nil {
+				t.Fatal(err)
+			}
+			data, ok := readZip(t, buf.Bytes())["00001"+tt.ext]
+			if !ok {
+				t.Fatalf("missing 00001%s", tt.ext)
+			}
+			if !bytes.HasPrefix(data, tt.magic) {
+				t.Errorf("wrong image signature: % x", data[:4])
+			}
+		})
+	}
+}
+
+func TestGenerateQualityAffectsSize(t *testing.T) {
+	size := func(q int) int {
+		buf := new(bytes.Buffer)
+		if err := Generate(buf, noisyManga(), Options{JPEGQuality: q}); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Len()
+	}
+	if low, high := size(10), size(95); low >= high {
+		t.Errorf("quality 10 (%d bytes) should be smaller than quality 95 (%d bytes)", low, high)
+	}
+}
+
+func TestGenerateInvalidQuality(t *testing.T) {
+	for _, q := range []int{-1, 101} {
+		if err := Generate(new(bytes.Buffer), testManga(), Options{JPEGQuality: q}); err == nil {
+			t.Errorf("quality %d should be rejected", q)
+		}
+	}
+}
+
+func noisyManga() md.Manga {
+	img := image.NewGray(image.Rect(0, 0, 64, 64))
+	for i := range img.Pix {
+		img.Pix[i] = uint8(i * 7919 % 251)
+	}
+	m := testManga()
+	for id, vol := range m.Volumes {
+		vol.Cover = img
+		m.Volumes[id] = vol
+	}
+
+	return m
+}
+
 func TestFilename(t *testing.T) {
 	if got := filename(md.NewIdentifier("3")); got != "0003.cbz" {
 		t.Errorf("got %q", got)

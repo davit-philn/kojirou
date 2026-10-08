@@ -67,11 +67,19 @@ Sorting of volumes, chapters and pages is done numerically and an arbitrary numb
 ### Export CBZ instead of Kindle e-books
 
 Kojirou can also write each volume as a CBZ comic book archive, readable by most e-reader apps such as Komga, Kavita, KOReader and Tachiyomi.
-Pages are encoded as JPEG and a `ComicInfo.xml` with title, authors, language and reading direction is included.
+Pages are encoded as JPEG (quality 90 by default) and a `ComicInfo.xml` with title, authors, language and reading direction is included.
 Options like `--autocrop`, `--widepage` and `--left-to-right` apply as usual, while `--kindle-folder-mode` is not supported with this format.
 
 ``` shell
 kojirou d86cf65b-5f6c-437d-a0af-19a31f94ec55 -l en --format cbz
+```
+
+Use `--jpeg-quality` (1-100) to trade size for quality, or `--lossless` to store pages as PNG instead.
+Both options only affect the CBZ format.
+
+``` shell
+kojirou d86cf65b-5f6c-437d-a0af-19a31f94ec55 -l en --format cbz --jpeg-quality 75
+kojirou d86cf65b-5f6c-437d-a0af-19a31f94ec55 -l en --format cbz --lossless
 ```
 
 ### Crop whitespace from pages automatically

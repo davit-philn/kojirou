@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"io"
 	"io/fs"
 	"os"
@@ -18,7 +19,8 @@ import (
 	md "github.com/leotaku/kojirou/mangadex"
 )
 
-const jpegQuality = 90
+// DefaultJPEGQuality is used when Options.JPEGQuality is not set.
+const DefaultJPEGQuality = 90
 
 // Processor transforms a single page into zero or more output pages,
 // e.g. by cropping or splitting it.
@@ -27,6 +29,11 @@ type Processor func(image.Image) []image.Image
 type Options struct {
 	Process     Processor
 	RightToLeft bool
+
+	// JPEGQuality is the JPEG quality from 1 to 100, or 0 for the default.
+	JPEGQuality int
+	// Lossless stores pages as PNG instead of JPEG, ignoring JPEGQuality.
+	Lossless bool
 }
 
 type Directory struct {
@@ -76,19 +83,33 @@ func Generate(w io.Writer, manga md.Manga, opts Options) error {
 		opts.Process = func(img image.Image) []image.Image { return []image.Image{img} }
 	}
 
+	quality := opts.JPEGQuality
+	if quality == 0 {
+		quality = DefaultJPEGQuality
+	}
+	if quality < 1 || quality > 100 {
+		return fmt.Errorf("invalid JPEG quality: %d", quality)
+	}
+	ext, encode := ".jpg", func(w io.Writer, img image.Image) error {
+		return jpeg.Encode(w, img, &jpeg.Options{Quality: quality})
+	}
+	if opts.Lossless {
+		ext, encode = ".png", png.Encode
+	}
+
 	zw := zip.NewWriter(w)
 	pages := make([]comicPage, 0)
 	index := 0
 	add := func(img image.Image, typ string) error {
-		// JPEG data is already compressed, so deflating it again is wasted work.
+		// Encoded image data is already compressed, so deflating it again is wasted work.
 		fw, err := zw.CreateHeader(&zip.FileHeader{
-			Name:   fmt.Sprintf("%05d.jpg", index),
+			Name:   fmt.Sprintf("%05d%s", index, ext),
 			Method: zip.Store,
 		})
 		if err != nil {
 			return err
 		}
-		if err := jpeg.Encode(fw, img, &jpeg.Options{Quality: jpegQuality}); err != nil {
+		if err := encode(fw, img); err != nil {
 			return err
 		}
 		pages = append(pages, comicPage{Image: index, Type: typ})

@@ -42,6 +42,10 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("--kindle-folder-mode is not supported with --format=cbz")
 	}
 
+	if jpegQualityArg < 1 || jpegQualityArg > 100 {
+		return fmt.Errorf("--jpeg-quality must be between 1 and 100")
+	}
+
 	var dir volumeWriter
 	switch formatArg {
 	case FormatCBZ:
@@ -243,5 +247,7 @@ func (w *cbzWriter) Write(id md.Identifier, manga md.Manga, _ md.Volume, p forma
 			return kindle.CropAndSplit(img, kindle.WidepagePolicy(widepageArg), autocropArg, leftToRightArg)
 		},
 		RightToLeft: !leftToRightArg,
+		JPEGQuality: jpegQualityArg,
+		Lossless:    losslessArg,
 	}, p)
 }
