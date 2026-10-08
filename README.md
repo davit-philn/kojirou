@@ -64,6 +64,16 @@ Sorting of volumes, chapters and pages is done numerically and an arbitrary numb
     + `01: Title/` :: Chapter (with optional title, use colon ":")
       + `01.{jpeg,jpg,png,bmp}` :: Page
 
+### Export CBZ instead of Kindle e-books
+
+Kojirou can also write each volume as a CBZ comic book archive, readable by most e-reader apps such as Komga, Kavita, KOReader and Tachiyomi.
+Pages are encoded as JPEG and a `ComicInfo.xml` with title, authors, language and reading direction is included.
+Options like `--autocrop`, `--widepage` and `--left-to-right` apply as usual, while `--kindle-folder-mode` is not supported with this format.
+
+``` shell
+kojirou d86cf65b-5f6c-437d-a0af-19a31f94ec55 -l en --format cbz
+```
+
 ### Crop whitespace from pages automatically
 
 Kojirou has the ability to crop whitespace from the borders of manga pages.

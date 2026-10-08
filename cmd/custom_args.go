@@ -41,6 +41,32 @@ func (p *DataSaverPolicyArg) Type() string {
 	return "data-saver policy"
 }
 
+type FormatArg string
+
+const (
+	FormatMOBI FormatArg = "mobi"
+	FormatCBZ  FormatArg = "cbz"
+)
+
+func (f *FormatArg) String() string {
+	return string(*f)
+}
+
+func (f *FormatArg) Set(v string) error {
+	switch FormatArg(v) {
+	case FormatMOBI, FormatCBZ:
+		*f = FormatArg(v)
+	default:
+		return fmt.Errorf(`must be one of: "mobi" or "cbz"`)
+	}
+
+	return nil
+}
+
+func (f *FormatArg) Type() string {
+	return "output format"
+}
+
 type WidepagePolicyArg kindle.WidepagePolicy
 
 func (p *WidepagePolicyArg) String() string {

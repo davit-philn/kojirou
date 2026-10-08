@@ -15,7 +15,7 @@ const (
 	WidepagePolicySplitAndPreserve
 )
 
-func cropAndSplit(img image.Image, widepage WidepagePolicy, autocrop bool, ltr bool) []image.Image {
+func CropAndSplit(img image.Image, widepage WidepagePolicy, autocrop bool, ltr bool) []image.Image {
 	if autocrop {
 		croppedImg, err := crop.Crop(img, crop.Bounds(img))
 		if err != nil {

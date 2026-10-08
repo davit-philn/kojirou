@@ -16,6 +16,7 @@ var (
 	rankArg             string
 	autocropArg         bool
 	widepageArg         WidepagePolicyArg
+	formatArg           FormatArg = FormatMOBI
 	kindleFolderModeArg bool
 	dryRunArg           bool
 	outArg              string
@@ -176,6 +177,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&rankArg, "rank", "r", "most", "chapter ranking method to use")
 	rootCmd.Flags().BoolVarP(&autocropArg, "autocrop", "a", false, "crop whitespace from pages automatically")
 	rootCmd.Flags().VarP(&widepageArg, "widepage", "w", "split wide pages automatically")
+	rootCmd.Flags().Var(&formatArg, "format", "output format: mobi or cbz")
 	rootCmd.Flags().BoolVarP(&kindleFolderModeArg, "kindle-folder-mode", "k", false, "generate folder structure for Kindle devices")
 	rootCmd.Flags().BoolVarP(&leftToRightArg, "left-to-right", "p", false, "make reading direction left to right")
 	rootCmd.Flags().IntVarP(&fillVolumeNumberArg, "fill-volume-number", "n", 0, "fill volume number with leading zeros in title")

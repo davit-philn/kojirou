@@ -3,9 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"image"
 
 	"github.com/leotaku/kojirou/cmd/filter"
 	"github.com/leotaku/kojirou/cmd/formats"
+	"github.com/leotaku/kojirou/cmd/formats/cbz"
 	"github.com/leotaku/kojirou/cmd/formats/disk"
 	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
@@ -36,7 +38,17 @@ func run(ctx context.Context) error {
 	}
 	*manga = manga.WithCovers(covers)
 
-	dir := kindle.NewNormalizedDirectory(outArg, manga.Info.Title, kindleFolderModeArg)
+	if formatArg == FormatCBZ && kindleFolderModeArg {
+		return fmt.Errorf("--kindle-folder-mode is not supported with --format=cbz")
+	}
+
+	var dir volumeWriter
+	switch formatArg {
+	case FormatCBZ:
+		dir = newCBZWriter(outArg, manga.Info.Title)
+	default:
+		dir = newMOBIWriter(outArg, manga.Info.Title)
+	}
 	for _, volume := range manga.Sorted() {
 		if err := handleVolume(ctx, *manga, volume, dir); err != nil {
 			return fmt.Errorf("volume %v: %w", volume.Info.Identifier, err)
@@ -46,7 +58,7 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-func handleVolume(ctx context.Context, skeleton md.Manga, volume md.Volume, dir kindle.NormalizedDirectory) error {
+func handleVolume(ctx context.Context, skeleton md.Manga, volume md.Volume, dir volumeWriter) error {
 	p := formats.TitledProgress(fmt.Sprintf("Volume: %v", volume.Info.Identifier))
 	if dir.Has(volume.Info.Identifier) && !forceArg {
 		p.Cancel("Skipped")
@@ -59,20 +71,9 @@ func handleVolume(ctx context.Context, skeleton md.Manga, volume md.Volume, dir 
 	}
 
 	mangaForVolume := skeleton.WithChapters(volume.Sorted()).WithPages(pages)
-	mobi := kindle.GenerateMOBI(
-		mangaForVolume,
-		kindle.WidepagePolicy(widepageArg),
-		autocropArg,
-		leftToRightArg,
-	)
-	mobi.RightToLeft = !leftToRightArg
-	mobi.Title = fmt.Sprintf("%v: %v",
-		skeleton.Info.Title,
-		volume.Info.Identifier.StringFilled(fillVolumeNumberArg, 0, false),
-	)
 
 	p = formats.VanishingProgress("Writing...")
-	if err := dir.Write(volume.Info.Identifier, mobi, p); err != nil {
+	if err := dir.Write(volume.Info.Identifier, mangaForVolume, volume, p); err != nil {
 		p.Cancel("Error")
 		return fmt.Errorf("write: %w", err)
 	}
@@ -188,4 +189,59 @@ func filterAndSortFromFlags(cl md.ChapterList) (md.ChapterList, error) {
 	}
 
 	return cl, nil
+}
+
+// volumeWriter abstracts over the supported output formats.
+type volumeWriter interface {
+	Has(md.Identifier) bool
+	Write(id md.Identifier, manga md.Manga, volume md.Volume, p formats.Progress) error
+}
+
+type mobiWriter struct {
+	dir kindle.NormalizedDirectory
+}
+
+func newMOBIWriter(out, title string) *mobiWriter {
+	return &mobiWriter{kindle.NewNormalizedDirectory(out, title, kindleFolderModeArg)}
+}
+
+func (w *mobiWriter) Has(id md.Identifier) bool {
+	return w.dir.Has(id)
+}
+
+func (w *mobiWriter) Write(id md.Identifier, manga md.Manga, volume md.Volume, p formats.Progress) error {
+	book := kindle.GenerateMOBI(
+		manga,
+		kindle.WidepagePolicy(widepageArg),
+		autocropArg,
+		leftToRightArg,
+	)
+	book.RightToLeft = !leftToRightArg
+	book.Title = fmt.Sprintf("%v: %v",
+		manga.Info.Title,
+		volume.Info.Identifier.StringFilled(fillVolumeNumberArg, 0, false),
+	)
+
+	return w.dir.Write(id, book, p)
+}
+
+type cbzWriter struct {
+	dir cbz.Directory
+}
+
+func newCBZWriter(out, title string) *cbzWriter {
+	return &cbzWriter{cbz.NewDirectory(out, title)}
+}
+
+func (w *cbzWriter) Has(id md.Identifier) bool {
+	return w.dir.Has(id)
+}
+
+func (w *cbzWriter) Write(id md.Identifier, manga md.Manga, _ md.Volume, p formats.Progress) error {
+	return w.dir.Write(id, manga, cbz.Options{
+		Process: func(img image.Image) []image.Image {
+			return kindle.CropAndSplit(img, kindle.WidepagePolicy(widepageArg), autocropArg, leftToRightArg)
+		},
+		RightToLeft: !leftToRightArg,
+	}, p)
 }
