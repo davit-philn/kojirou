@@ -47,16 +47,16 @@ func init() {
 	mangadexClient = md.NewClient().WithHTTPClient(httpClient)
 }
 
-func MangadexSkeleton(mangaID string) (*md.Manga, error) {
-	return mangadexClient.FetchManga(context.TODO(), mangaID)
+func MangadexSkeleton(ctx context.Context, mangaID string) (*md.Manga, error) {
+	return mangadexClient.FetchManga(ctx, mangaID)
 }
 
-func MangadexChapters(mangaID string) (md.ChapterList, error) {
-	return mangadexClient.FetchChapters(context.TODO(), mangaID)
+func MangadexChapters(ctx context.Context, mangaID string) (md.ChapterList, error) {
+	return mangadexClient.FetchChapters(ctx, mangaID)
 }
 
-func MangadexCovers(manga *md.Manga, p formats.Progress) (md.ImageList, error) {
-	ctx, cancel := context.WithCancel(context.TODO())
+func MangadexCovers(parent context.Context, manga *md.Manga, p formats.Progress) (md.ImageList, error) {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	covers, err := mangadexClient.FetchCovers(ctx, manga.Info.ID)
@@ -90,8 +90,8 @@ func MangadexCovers(manga *md.Manga, p formats.Progress) (md.ImageList, error) {
 	}
 }
 
-func MangadexPages(chapterList md.ChapterList, policy DataSaverPolicy, p formats.Progress) (md.ImageList, error) {
-	ctx, cancel := context.WithCancel(context.TODO())
+func MangadexPages(parent context.Context, chapterList md.ChapterList, policy DataSaverPolicy, p formats.Progress) (md.ImageList, error) {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	eg, ctx := errgroup.WithContext(ctx)

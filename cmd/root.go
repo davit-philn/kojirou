@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"runtime/pprof"
 
@@ -42,7 +44,7 @@ var rootCmd = &cobra.Command{
 		cmd.SilenceUsage = true
 		identifierArg = args[0]
 
-		return run()
+		return run(cmd.Context())
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if cpuprofileArg != "" {
@@ -156,11 +158,15 @@ given.  It accepts the format of BCP 47 language tags.`,
 }
 
 func Execute() {
+	// Cancel in-flight downloads on interrupt instead of dying mid-write.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	if helpRankingFlag {
 		helpRankingCmd.Help() //nolint:errcheck
 	} else if helpFilterFlag {
 		helpFilterCmd.Help() //nolint:errcheck
-	} else if err := rootCmd.Execute(); err != nil {
+	} else if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }

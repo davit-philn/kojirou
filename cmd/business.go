@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/leotaku/kojirou/cmd/filter"
@@ -12,13 +13,13 @@ import (
 	"golang.org/x/text/language"
 )
 
-func run() error {
-	manga, err := download.MangadexSkeleton(identifierArg)
+func run(ctx context.Context) error {
+	manga, err := download.MangadexSkeleton(ctx, identifierArg)
 	if err != nil {
 		return fmt.Errorf("skeleton: %w", err)
 	}
 
-	chapters, err := getChapters(*manga)
+	chapters, err := getChapters(ctx, *manga)
 	if err != nil {
 		return fmt.Errorf("chapters: %w", err)
 	}
@@ -29,7 +30,7 @@ func run() error {
 		return nil
 	}
 
-	covers, err := getCovers(manga)
+	covers, err := getCovers(ctx, manga)
 	if err != nil {
 		return fmt.Errorf("covers: %w", err)
 	}
@@ -37,7 +38,7 @@ func run() error {
 
 	dir := kindle.NewNormalizedDirectory(outArg, manga.Info.Title, kindleFolderModeArg)
 	for _, volume := range manga.Sorted() {
-		if err := handleVolume(*manga, volume, dir); err != nil {
+		if err := handleVolume(ctx, *manga, volume, dir); err != nil {
 			return fmt.Errorf("volume %v: %w", volume.Info.Identifier, err)
 		}
 	}
@@ -45,14 +46,14 @@ func run() error {
 	return nil
 }
 
-func handleVolume(skeleton md.Manga, volume md.Volume, dir kindle.NormalizedDirectory) error {
+func handleVolume(ctx context.Context, skeleton md.Manga, volume md.Volume, dir kindle.NormalizedDirectory) error {
 	p := formats.TitledProgress(fmt.Sprintf("Volume: %v", volume.Info.Identifier))
 	if dir.Has(volume.Info.Identifier) && !forceArg {
 		p.Cancel("Skipped")
 		return nil
 	}
 
-	pages, err := getPages(volume, p)
+	pages, err := getPages(ctx, volume, p)
 	if err != nil {
 		return fmt.Errorf("pages: %w", err)
 	}
@@ -80,8 +81,8 @@ func handleVolume(skeleton md.Manga, volume md.Volume, dir kindle.NormalizedDire
 	return nil
 }
 
-func getChapters(manga md.Manga) (md.ChapterList, error) {
-	chapters, err := download.MangadexChapters(manga.Info.ID)
+func getChapters(ctx context.Context, manga md.Manga) (md.ChapterList, error) {
+	chapters, err := download.MangadexChapters(ctx, manga.Info.ID)
 	if err != nil {
 		return nil, fmt.Errorf("mangadex: %w", err)
 	}
@@ -112,9 +113,9 @@ func getChapters(manga md.Manga) (md.ChapterList, error) {
 	return filter.RemoveDuplicates(chapters), nil
 }
 
-func getCovers(manga *md.Manga) (md.ImageList, error) {
+func getCovers(ctx context.Context, manga *md.Manga) (md.ImageList, error) {
 	p := formats.VanishingProgress("Covers")
-	covers, err := download.MangadexCovers(manga, p)
+	covers, err := download.MangadexCovers(ctx, manga, p)
 	if err != nil {
 		p.Cancel("Error")
 		return nil, fmt.Errorf("mangadex: %w", err)
@@ -138,8 +139,8 @@ func getCovers(manga *md.Manga) (md.ImageList, error) {
 	return covers, nil
 }
 
-func getPages(volume md.Volume, p formats.CliProgress) (md.ImageList, error) {
-	mangadexPages, err := download.MangadexPages(volume.Sorted().FilterBy(func(ci md.ChapterInfo) bool {
+func getPages(ctx context.Context, volume md.Volume, p formats.CliProgress) (md.ImageList, error) {
+	mangadexPages, err := download.MangadexPages(ctx, volume.Sorted().FilterBy(func(ci md.ChapterInfo) bool {
 		return ci.GroupNames.String() != "Filesystem"
 	}), download.DataSaverPolicy(dataSaverArg), p)
 	if err != nil {
