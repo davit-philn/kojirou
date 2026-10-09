@@ -173,6 +173,7 @@ kojirou https://example.org/series/my-series -l en --source-config source.json -
 
 Chapter numbers are taken from the first number in each chapter title.
 Pages are downloaded a few at a time and retried with backoff on HTTP 429 and 5xx responses.
+To try it without a real website, run `python3 contrib/selector_demo.py` and follow the command it prints.
 Only plain HTML is read, so sites that load images with JavaScript are not supported, and there are no covers.
 `--data-saver` has no effect on custom sources.
 
