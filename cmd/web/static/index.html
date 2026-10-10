@@ -1,1 +1,25 @@
-<!doctype html><title>placeholder</title>
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kojirou</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c2410c'/%3E%3Cpath d='M9 8h4v7l7-7h5l-8 8 8 8h-5l-7-7v7H9z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">Kojirou</a>
+    <nav aria-label="Chính">
+      <a href="#/" data-nav="browse">Duyệt truyện</a>
+      <a href="#/downloads" data-nav="downloads">Đang tải <span id="badge" class="badge" hidden></span></a>
+      <a href="#/library" data-nav="library">Thư viện</a>
+      <a href="#/sources" data-nav="sources">Nguồn</a>
+    </nav>
+  </header>
+  <main id="app" tabindex="-1"></main>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <noscript><p class="notice">Cần bật JavaScript để dùng giao diện này.</p></noscript>
+  <script src="app.js"></script>
+</body>
+</html>

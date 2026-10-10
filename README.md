@@ -139,6 +139,28 @@ Kojirou can be configured to fall back on reencoded lower-quality versions of th
 kojirou d86cf65b-5f6c-437d-a0af-19a31f94ec55 -l en --data-saver=fallback
 ```
 
+## Web interface
+
+Kojirou also comes with a local web interface, so you can pick series with the mouse instead of typing commands.
+Start it with `kojirou serve`, or simply run the program without any arguments (for example by double-clicking it), and your browser opens automatically.
+
+``` shell
+kojirou serve                           # http://127.0.0.1:8080, downloads go to ./library
+kojirou serve --library D:\Manga --addr 127.0.0.1:9000
+```
+
++ **Duyệt truyện** :: Browse popular or latest series on MangaDex, search by title and filter by translation language
++ **Chapter picker** :: Open a series, tick whole volumes or single chapters (or a range) and choose the format and image options
++ **Đang tải** :: Watch queued downloads, with progress per volume, and cancel them
++ **Thư viện** :: Download finished volumes from the library folder again through the browser
++ **Nguồn** :: Add websites described by CSS selectors (see below), test the selectors on a real page, then browse them like MangaDex
+
+The server has no login and only listens on your own computer by default.
+It rejects requests with an unexpected `Host` or `Origin` header and requires a custom header for every change, so other websites open in your browser cannot control it.
+Do not expose it to a network you do not trust.
+Saved sources live in your user configuration directory (`--config-dir` changes it).
+To look at the interface without internet access, run `python3 contrib/mock_mangadex.py 9100` and start the server with `--api-url http://127.0.0.1:9100/ --covers-url http://127.0.0.1:9100/covers/`.
+
 ## Custom sources
 
 Besides MangaDex, Kojirou can read chapters from a website described by a JSON file of CSS selectors.

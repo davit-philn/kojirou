@@ -456,3 +456,19 @@ func TestCancelQueuedAndRunningDownloads(t *testing.T) {
 		t.Errorf("unknown job: %d", rec.Code)
 	}
 }
+
+func TestEmbeddedInterfaceIsComplete(t *testing.T) {
+	e := newEnv(t, nil)
+	index := e.do("GET", "/", nil).Body.String()
+	for _, asset := range []string{"style.css", "app.js"} {
+		if !strings.Contains(index, asset) {
+			t.Errorf("index.html does not reference %s", asset)
+		}
+		if rec := e.do("GET", "/"+asset, nil); rec.Code != 200 || rec.Body.Len() == 0 {
+			t.Errorf("%s: status %d, %d bytes", asset, rec.Code, rec.Body.Len())
+		}
+	}
+	if rec := e.do("GET", "/api/nope", nil); rec.Code != 404 && rec.Code != 405 {
+		t.Errorf("unknown API path: status %d", rec.Code)
+	}
+}
