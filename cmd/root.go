@@ -163,6 +163,11 @@ given.  It accepts the format of BCP 47 language tags.`,
 }
 
 func Execute() {
+	// Started without arguments (e.g. by double-clicking the program): open the web interface.
+	if len(os.Args) == 1 {
+		os.Args = append(os.Args, "serve")
+	}
+
 	// Cancel in-flight downloads on interrupt instead of dying mid-write.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()

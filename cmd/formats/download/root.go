@@ -47,6 +47,13 @@ func init() {
 	mangadexClient = md.NewClient().WithHTTPClient(httpClient)
 }
 
+// SetMangadexClient replaces the client used for all MangaDex requests,
+// e.g. to point it at a mirror or a test server. It must be called before
+// any download starts.
+func SetMangadexClient(c *md.Client) {
+	mangadexClient = c.WithHTTPClient(httpClient)
+}
+
 func MangadexSkeleton(ctx context.Context, mangaID string) (*md.Manga, error) {
 	return mangadexClient.FetchManga(ctx, mangaID)
 }
