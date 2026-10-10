@@ -24,17 +24,17 @@ func NewNormalizedDirectory(target, title string, kindleFolder bool) NormalizedD
 	switch {
 	case kindleFolder && target == "":
 		return NormalizedDirectory{
-			bookDirectory:      path.Join("kindle", "documents", pathnameFromTitle(title)),
+			bookDirectory:      path.Join("kindle", "documents", PathnameFromTitle(title)),
 			thumbnailDirectory: path.Join("kindle", "system", "thumbnails"),
 		}
 	case kindleFolder:
 		return NormalizedDirectory{
-			bookDirectory:      path.Join(target, "documents", pathnameFromTitle(title)),
+			bookDirectory:      path.Join(target, "documents", PathnameFromTitle(title)),
 			thumbnailDirectory: path.Join(target, "system", "thumbnails"),
 		}
 	case target == "":
 		return NormalizedDirectory{
-			bookDirectory: pathnameFromTitle(title),
+			bookDirectory: PathnameFromTitle(title),
 		}
 	default:
 		return NormalizedDirectory{
@@ -77,7 +77,8 @@ func (n *NormalizedDirectory) Write(identifier md.Identifier, mobi mobi.Book, p 
 	return nil
 }
 
-func pathnameFromTitle(filename string) string {
+// PathnameFromTitle makes a title safe to use as a single path element.
+func PathnameFromTitle(filename string) string {
 	switch runtime.GOOS {
 	case "windows":
 		filename = strings.ReplaceAll(filename, "\"", "＂")

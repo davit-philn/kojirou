@@ -1,8 +1,7 @@
-package cmd
+package job
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/leotaku/kojirou/cmd/formats"
 	"github.com/leotaku/kojirou/cmd/formats/download"
@@ -12,7 +11,7 @@ import (
 )
 
 // contentSource is where series metadata, chapters, covers and pages come
-// from. Chapters from --disk are merged in separately.
+// from. Chapters from Options.Disk are merged in separately.
 type contentSource interface {
 	Name() string
 	Skeleton(ctx context.Context, id string) (*md.Manga, error)
@@ -21,20 +20,17 @@ type contentSource interface {
 	Pages(ctx context.Context, chapters md.ChapterList, p formats.Progress) (md.ImageList, error)
 }
 
-func newContentSource() (contentSource, error) {
-	if sourceConfigArg == "" {
-		return mangadexSource{}, nil
+func newContentSource(opts Options) contentSource {
+	if opts.Source != nil {
+		return selectorSource{selector.NewProvider(*opts.Source, language.Make(opts.Language))}
 	}
 
-	cfg, err := selector.LoadConfig(sourceConfigArg)
-	if err != nil {
-		return nil, fmt.Errorf("source config %q: %w", sourceConfigArg, err)
-	}
-
-	return selectorSource{selector.NewProvider(cfg, language.Make(languageArg))}, nil
+	return mangadexSource{dataSaver: opts.DataSaver}
 }
 
-type mangadexSource struct{}
+type mangadexSource struct {
+	dataSaver download.DataSaverPolicy
+}
 
 func (mangadexSource) Name() string { return "mangadex" }
 
@@ -50,8 +46,8 @@ func (mangadexSource) Covers(ctx context.Context, manga *md.Manga, p formats.Pro
 	return download.MangadexCovers(ctx, manga, p)
 }
 
-func (mangadexSource) Pages(ctx context.Context, chapters md.ChapterList, p formats.Progress) (md.ImageList, error) {
-	return download.MangadexPages(ctx, chapters, download.DataSaverPolicy(dataSaverArg), p)
+func (s mangadexSource) Pages(ctx context.Context, chapters md.ChapterList, p formats.Progress) (md.ImageList, error) {
+	return download.MangadexPages(ctx, chapters, s.dataSaver, p)
 }
 
 type selectorSource struct {
