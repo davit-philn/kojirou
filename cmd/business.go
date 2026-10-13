@@ -28,8 +28,16 @@ func optionsFromFlags() (job.Options, error) {
 		return job.Options{}, fmt.Errorf("--jpeg-quality must be between 1 and 100")
 	}
 
+	identifier := identifierArg
+	if sourceConfigArg == "" {
+		// Accept a pasted MangaDex link as well as a bare series ID.
+		if id, ok := md.ParseSeriesID(identifier); ok {
+			identifier = id
+		}
+	}
+
 	opts := job.Options{
-		Identifier:       identifierArg,
+		Identifier:       identifier,
 		Language:         languageArg,
 		Rank:             rankArg,
 		Groups:           groupsFilter,

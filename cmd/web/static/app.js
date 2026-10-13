@@ -66,6 +66,15 @@ function toast(message, { bad = false, link } = {}) {
   setTimeout(() => el.remove(), bad ? 8000 : 5000);
 }
 
+// Accepts a MangaDex series ID or a mangadex.org/title/<id>/… link.
+function seriesIdFromText(text) {
+  const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  const t = text.trim();
+  if (new RegExp(`^${uuid}$`, "i").test(t)) return t.toLowerCase();
+  const m = new RegExp(`^https?://(?:www\\.)?mangadex\\.org/title/(${uuid})(?:[/?#]|$)`, "i").exec(t);
+  return m ? m[1].toLowerCase() : null;
+}
+
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + " B";
   const units = ["KB", "MB", "GB"];
@@ -175,7 +184,7 @@ async function browsePage() {
   }
 
   function mangadexBody() {
-    const q = h("input", { type: "search", placeholder: "Tên truyện (bỏ trống để xem phổ biến)", value: query, "aria-label": "Tìm truyện" });
+    const q = h("input", { type: "search", placeholder: "Tên truyện hoặc dán link MangaDex (bỏ trống để xem phổ biến)", value: query, "aria-label": "Tìm truyện" });
     const order = h("select", { "aria-label": "Sắp xếp", onchange: (e) => { state.order = e.target.value; store.set("browse", state); } },
       h("option", { value: "" }, "Mặc định"),
       h("option", { value: "followedCount" }, "Phổ biến nhất"),
@@ -184,7 +193,13 @@ async function browsePage() {
     order.value = state.order;
     const adult = h("input", { type: "checkbox", checked: state.adult, onchange: (e) => { state.adult = e.target.checked; store.set("browse", state); } });
     body.append(
-      h("form", { class: "row", onsubmit: (e) => { e.preventDefault(); query = q.value.trim(); load(0); } },
+      h("form", { class: "row", onsubmit: (e) => {
+        e.preventDefault();
+        query = q.value.trim();
+        const id = seriesIdFromText(query);
+        if (id) { location.hash = "#/series?" + new URLSearchParams({ source: "mangadex", id, lang: state.lang }); return; }
+        load(0);
+      } },
         h("label", { class: "field grow" }, h("span", null, "Tìm kiếm"), q),
         h("label", { class: "field" }, h("span", null, "Có chương dịch"), langSelect(state.lang, (v) => { state.lang = v; store.set("browse", state); })),
         h("label", { class: "field" }, h("span", null, "Sắp xếp"), order),
