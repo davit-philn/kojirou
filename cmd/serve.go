@@ -84,7 +84,7 @@ func serve(cmd *cobra.Command) error {
 		LibraryDir: serveLibrary,
 		ConfigDir:  configDir,
 		Version:    buildInfo.Main.Version,
-		Dex:        dex,
+		Dex:        download.InteractiveClient(),
 	})
 	if err != nil {
 		return err

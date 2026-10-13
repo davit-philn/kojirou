@@ -42,6 +42,10 @@ type Options struct {
 	Force  bool
 	Disk   string
 
+	// Interactive makes MangaDex lookups fail fast instead of retrying for
+	// a long time. Use it when a person is waiting for the result.
+	Interactive bool
+
 	Format           Format
 	Autocrop         bool
 	Widepage         kindle.WidepagePolicy

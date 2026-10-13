@@ -32,6 +32,12 @@ func NewClient() *Client {
 	}
 }
 
+// Clone returns an independent copy that can use a different HTTP client.
+func (c *Client) Clone() *Client {
+	cp := *c
+	return &cp
+}
+
 func (c *Client) WithBaseURL(url url.URL) *Client {
 	c.baseURL = url
 	return c

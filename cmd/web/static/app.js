@@ -27,13 +27,23 @@ function h(tag, props, ...children) {
 }
 
 async function api(path, options = {}) {
-  const init = { method: options.method || "GET", headers: {}, signal: options.signal };
+  const timeoutMs = options.timeout || 120000;
+  const init = { method: options.method || "GET", headers: {}, signal: options.signal || AbortSignal.timeout(timeoutMs) };
   if (init.method !== "GET") init.headers["X-Kojirou-Client"] = "1";
   if (options.body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(options.body);
   }
-  const resp = await fetch(path, init);
+  let resp;
+  try {
+    resp = await fetch(path, init);
+  } catch (err) {
+    if (err.name === "TimeoutError") {
+      throw new Error(`Máy chủ không trả lời sau ${Math.round(timeoutMs / 1000)} giây. Xem cửa sổ terminal đang chạy kojirou để biết chi tiết.`);
+    }
+    if (err.name === "AbortError") throw err;
+    throw new Error("Không kết nối được tới kojirou. Cửa sổ terminal đã bị đóng chưa?");
+  }
   let data = null;
   try { data = await resp.json(); } catch (_) { /* no body */ }
   if (!resp.ok) throw new Error((data && data.error) || `Lỗi ${resp.status}`);
@@ -253,7 +263,8 @@ async function seriesPage(params) {
   await loadSeries();
 
   async function loadSeries() {
-    chaptersBox.replaceChildren(spinner());
+    chaptersBox.replaceChildren(spinner(), h("p", { class: "muted small", style: "text-align:center" },
+      "Đang lấy danh sách chương… truyện có nhiều chương hoặc nhiều nhóm dịch có thể mất vài chục giây."));
     selected.clear();
     updateBar();
     const p = new URLSearchParams({ source, id, lang });
@@ -324,7 +335,12 @@ async function seriesPage(params) {
 
   function renderChapters() {
     if (series.volumes.length === 0) {
-      chaptersBox.replaceChildren(h("div", { class: "empty" }, `Không có chương nào bằng ngôn ngữ “${lang}”. Thử đổi ngôn ngữ chương.`));
+      const others = (series.languages || []).filter((l) => l !== lang);
+      chaptersBox.replaceChildren(h("div", { class: "empty" },
+        h("p", null, `Không có chương nào tải được bằng ngôn ngữ “${lang}”.`),
+        h("p", { class: "small" }, "Có thể truyện chưa có bản dịch này, hoặc các chương chỉ nằm ở trang của nhà xuất bản (liên kết ngoài) nên MangaDex không cung cấp ảnh để tải."),
+        others.length ? h("p", null, "Thử ngôn ngữ khác: ",
+          others.map((l) => h("button", { class: "btn small", style: "margin:.15rem", onclick: () => { lang = l; loadSeries(); } }, l))) : null));
       return;
     }
     const all = series.volumes.flatMap((v) => v.chapters);

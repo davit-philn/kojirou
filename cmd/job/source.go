@@ -25,21 +25,30 @@ func newContentSource(opts Options) contentSource {
 		return selectorSource{selector.NewProvider(*opts.Source, language.Make(opts.Language))}
 	}
 
-	return mangadexSource{dataSaver: opts.DataSaver}
+	return mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
 }
 
 type mangadexSource struct {
-	dataSaver download.DataSaverPolicy
+	dataSaver   download.DataSaverPolicy
+	interactive bool
+}
+
+func (s mangadexSource) client() *md.Client {
+	if s.interactive {
+		return download.InteractiveClient()
+	}
+
+	return download.PatientClient()
 }
 
 func (mangadexSource) Name() string { return "mangadex" }
 
-func (mangadexSource) Skeleton(ctx context.Context, id string) (*md.Manga, error) {
-	return download.MangadexSkeleton(ctx, id)
+func (s mangadexSource) Skeleton(ctx context.Context, id string) (*md.Manga, error) {
+	return s.client().FetchManga(ctx, id)
 }
 
-func (mangadexSource) Chapters(ctx context.Context, id string) (md.ChapterList, error) {
-	return download.MangadexChapters(ctx, id)
+func (s mangadexSource) Chapters(ctx context.Context, id string) (md.ChapterList, error) {
+	return s.client().FetchChapters(ctx, id)
 }
 
 func (mangadexSource) Covers(ctx context.Context, manga *md.Manga, p formats.Progress) (md.ImageList, error) {

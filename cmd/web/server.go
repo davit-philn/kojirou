@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -34,6 +35,7 @@ const (
 	maxBodyBytes   = 1 << 20
 	maxChapterIDs  = 5000
 	mangadexSource = "mangadex"
+	slowRequest    = 5 * time.Second
 )
 
 var (
@@ -148,7 +150,21 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 // state-changing requests without the custom client header. Browsers do not
 // let other origins set that header without a preflight, which we never grant.
 func (s *Server) guard(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		w := &statusWriter{ResponseWriter: rw}
+		start := time.Now()
+		defer func() {
+			if !strings.HasPrefix(r.URL.Path, "/api/") {
+				return
+			}
+			elapsed := time.Since(start)
+			if w.errMsg != "" || w.status >= 500 {
+				log.Printf("%s %s -> %d after %s: %s", r.Method, r.URL.RequestURI(), w.status, elapsed.Round(time.Millisecond), w.errMsg)
+			} else if elapsed > slowRequest {
+				log.Printf("%s %s took %s", r.Method, r.URL.RequestURI(), elapsed.Round(time.Millisecond))
+			}
+		}()
+
 		if !s.hosts[r.Host] {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
@@ -187,8 +203,33 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, err error) {
+	if sw, ok := w.(*statusWriter); ok {
+		sw.errMsg = err.Error()
+	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
+
+// statusWriter records the status code and error message of a response so
+// failures can be logged to the terminal.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	errMsg string
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func decodeBody(r *http.Request, v any) error {
 	dec := json.NewDecoder(r.Body)
@@ -320,10 +361,13 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+
 	dto := seriesDTO{ID: id, Source: source, Authors: []string{}, Languages: []string{}, Volumes: []volumeDTO{}}
 	if cfg == nil {
 		dto.Source = mangadexSource
-		summary, err := s.dex.Describe(r.Context(), id)
+		summary, err := s.dex.Describe(ctx, id)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
@@ -332,12 +376,13 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		dto.Authors, dto.Status, dto.Year, dto.Languages = summary.Authors, summary.Status, summary.Year, summary.Languages
 	}
 
-	manga, err := job.Inspect(r.Context(), job.Options{
-		Identifier: id,
-		Source:     cfg,
-		Language:   lang,
-		Rank:       "most",
-		Format:     job.FormatCBZ,
+	manga, err := job.Inspect(ctx, job.Options{
+		Identifier:  id,
+		Source:      cfg,
+		Language:    lang,
+		Rank:        "most",
+		Format:      job.FormatCBZ,
+		Interactive: true,
 	}, job.NopReporter{})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)

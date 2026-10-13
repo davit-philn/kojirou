@@ -23,6 +23,11 @@ func NewClient() *Client {
 	}
 }
 
+// Clone returns an independent copy that can use a different HTTP client.
+func (c *Client) Clone() *Client {
+	return &Client{base: c.base.Clone(), coverBaseURL: c.coverBaseURL}
+}
+
 func (c *Client) WithHTTPClient(http *http.Client) *Client {
 	c.base.WithHTTPClient(http)
 	return c

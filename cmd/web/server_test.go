@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -470,5 +471,24 @@ func TestEmbeddedInterfaceIsComplete(t *testing.T) {
 	}
 	if rec := e.do("GET", "/api/nope", nil); rec.Code != 404 && rec.Code != 405 {
 		t.Errorf("unknown API path: status %d", rec.Code)
+	}
+}
+
+func TestFailuresAreLoggedToTheTerminal(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	e := newEnv(t, nil)
+	if rec := e.do("GET", "/api/series?id=not-a-uuid", nil); rec.Code != 400 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if !strings.Contains(logs.String(), "/api/series?id=not-a-uuid -> 400") || !strings.Contains(logs.String(), "invalid MangaDex series id") {
+		t.Errorf("failure not logged: %q", logs.String())
+	}
+
+	logs.Reset()
+	if rec := e.do("GET", "/api/config", nil); rec.Code != 200 || logs.Len() != 0 {
+		t.Errorf("successful requests should not be logged: %q", logs.String())
 	}
 }

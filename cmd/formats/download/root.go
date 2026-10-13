@@ -32,8 +32,15 @@ const (
 )
 
 var (
+	// httpClient is patient: image servers and the at-home API rate limit
+	// aggressively, so retries wait several seconds.
 	httpClient     *http.Client
 	mangadexClient *md.Client
+
+	// quickClient is for interactive use such as browsing: it gives up
+	// after a few quick retries so a person is never left waiting.
+	quickHTTPClient *http.Client
+	quickClient     *md.Client
 )
 
 func init() {
@@ -44,14 +51,36 @@ func init() {
 	retry.CheckRetry = bodyReadableErrorPolicy
 
 	httpClient = retry.StandardClient()
-	mangadexClient = md.NewClient().WithHTTPClient(httpClient)
+
+	quick := retryablehttp.NewClient()
+	quick.Logger = nil
+	quick.RetryMax = 2
+	quick.RetryWaitMin = 500 * time.Millisecond
+	quick.RetryWaitMax = 2 * time.Second
+	quick.Backoff = retryablehttp.LinearJitterBackoff
+	quick.CheckRetry = bodyReadableErrorPolicy
+	// After the last retry, hand back the response so its error detail
+	// (e.g. MangaDex's own message) reaches the user.
+	quick.ErrorHandler = retryablehttp.PassthroughErrorHandler
+	quick.HTTPClient.Timeout = 15 * time.Second
+	quickHTTPClient = quick.StandardClient()
+
+	SetMangadexClient(md.NewClient())
 }
+
+// PatientClient is the MangaDex client used for downloads.
+func PatientClient() *md.Client { return mangadexClient }
+
+// InteractiveClient is the MangaDex client used for browsing and listing
+// chapters; it fails fast instead of retrying for long.
+func InteractiveClient() *md.Client { return quickClient }
 
 // SetMangadexClient replaces the client used for all MangaDex requests,
 // e.g. to point it at a mirror or a test server. It must be called before
 // any download starts.
 func SetMangadexClient(c *md.Client) {
-	mangadexClient = c.WithHTTPClient(httpClient)
+	mangadexClient = c.Clone().WithHTTPClient(httpClient)
+	quickClient = c.Clone().WithHTTPClient(quickHTTPClient)
 }
 
 func MangadexSkeleton(ctx context.Context, mangaID string) (*md.Manga, error) {
