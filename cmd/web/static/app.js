@@ -558,9 +558,9 @@ async function seriesPage(params) {
   function describeNote(note) {
     const m = /^chapter (\S+) is not on the main source; its volume \((.*)\) is a guess/.exec(note);
     if (m) return `Chương ${m[1]} chỉ có ở nguồn bù; tập ${m[2]} là đoán vì nằm giữa hai tập khác nhau. Kiểm tra lại nếu cần.`;
-    const many = /^(\d+) chapters \((\S+) to (\S+)\) are not in MangaDex's volumes/.exec(note);
+    const many = /^(\d+) chapters \((\S+) to (\S+)\) are not in MangaDex's volumes, which list only (\d+) chapters in (\d+) volumes/.exec(note);
     if (many) {
-      return `MangaDex chưa xếp ${many[1]} chương (từ ${many[2]} đến ${many[3]}) vào tập nên tool đoán theo các chương bên cạnh. Thường là do MangaDex chỉ có thông tin tập cho các tập mới; kiểm tra lại các tập đầu hoặc chia tập bằng quy tắc ở tab Nguồn.`;
+      return `MangaDex chưa xếp ${many[1]} chương (từ ${many[2]} đến ${many[3]}) vào tập nên tool đoán theo các chương bên cạnh. MangaDex chỉ có thông tin tập cho ${many[4]} chương (${many[5]} tập). Nếu quá ít, truyện này trên MangaDex chưa ghi số tập: hãy chọn bản MangaDex khác hoặc chia tập bằng quy tắc ở tab Nguồn.`;
     }
     const v = /^chapter (\S+) is not in MangaDex's volumes; its volume \((.*)\) is a guess/.exec(note);
     if (v) return `MangaDex chưa xếp chương ${v[1]} vào tập; tập ${v[2]} là đoán theo các chương bên cạnh. Kiểm tra lại nếu cần.`;

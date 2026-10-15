@@ -79,8 +79,8 @@ func TestAssignVolumesSummarisesManyGuesses(t *testing.T) {
 	if v := volumeOf(got, "1"); v != "3" {
 		t.Errorf("chapter 1 in volume %q, want 3", v)
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "37 chapters (1 to 39)") {
-		t.Errorf("notes = %q, want one summary of 37 chapters", notes)
+	if len(notes) != 1 || !strings.Contains(notes[0], "37 chapters (1 to 39)") || !strings.Contains(notes[0], "only 3 chapters in 2 volumes") {
+		t.Errorf("notes = %q, want one summary of 37 chapters from 3 listed ones", notes)
 	}
 }
 

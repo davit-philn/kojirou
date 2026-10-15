@@ -123,9 +123,13 @@ func assignVolumes(volumes map[md.Identifier]md.Identifier, site md.ChapterList,
 		}
 	default:
 		sort.SliceStable(guessed, func(i, j int) bool { return guessed[i].Less(guessed[j]) })
+		distinct := make(map[md.Identifier]bool)
+		for _, volume := range volumes {
+			distinct[volume] = true
+		}
 		notes = append(notes, fmt.Sprintf(
-			"%d chapters (%v to %v) are not in MangaDex's volumes; their volumes are guesses from the neighbouring chapters",
-			len(guessed), guessed[0], guessed[len(guessed)-1]))
+			"%d chapters (%v to %v) are not in MangaDex's volumes, which list only %d chapters in %d volumes; their volumes are guesses from the neighbouring chapters",
+			len(guessed), guessed[0], guessed[len(guessed)-1], len(volumes), len(distinct)))
 	}
 
 	return result, notes
