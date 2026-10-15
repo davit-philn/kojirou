@@ -42,3 +42,28 @@ func TestParseAggregate(t *testing.T) {
 		t.Error("garbage must be an error")
 	}
 }
+
+func TestAggregateDropsStrayVolumeTags(t *testing.T) {
+	// Chapters 1-4 are in volumes 1 and 2, 5-8 in volume 3. One group also
+	// tagged chapters 3 and 7 as volume 1, and chapter 2 only as volume 9.
+	raw := `{
+		"1":{"volume":"1","chapters":{"1":{"chapter":"1"},"3":{"chapter":"3"},"7":{"chapter":"7"}}},
+		"2":{"volume":"2","chapters":{"3":{"chapter":"3"},"4":{"chapter":"4"}}},
+		"3":{"volume":"3","chapters":{"5":{"chapter":"5"},"6":{"chapter":"6"},"7":{"chapter":"7"},"8":{"chapter":"8"}}},
+		"9":{"volume":"9","chapters":{"2":{"chapter":"2"}}}}`
+	for i := 0; i < 20; i++ { // map order is random: the result must not depend on it
+		got, err := parseAggregate(json.RawMessage(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{"1": "1", "3": "1", "4": "2", "5": "3", "6": "3", "7": "3", "8": "3"}
+		for ch, vol := range want {
+			if g := got[NewIdentifier(ch)]; g.String() != vol {
+				t.Fatalf("chapter %s in volume %q, want %q (all: %v)", ch, g.String(), vol, got)
+			}
+		}
+		if _, ok := got[NewIdentifier("2")]; ok {
+			t.Fatalf("chapter 2 only has a contradicting tag and must be dropped: %v", got)
+		}
+	}
+}
