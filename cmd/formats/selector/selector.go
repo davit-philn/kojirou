@@ -40,7 +40,8 @@ type SourceConfig struct {
 	// ImageListSelector selects one element per page image.
 	ImageListSelector string `json:"image_list_selector"`
 	// ImageAttr names the attribute holding the image URL, e.g. "src" or
-	// "data-original". Defaults to "src".
+	// "data-original". Several can be listed, separated by commas; the first
+	// one holding an http(s) address is used. Defaults to "src".
 	ImageAttr string `json:"image_attr"`
 
 	// TimeoutSeconds bounds each HTTP request. Defaults to 30.
@@ -175,7 +176,7 @@ func fetchChapterList(ctx context.Context, client *http.Client, pageURL string, 
 	})
 
 	if len(chapters) == 0 {
-		return nil, fmt.Errorf("no chapters matched %q on %v", cfg.ChapterListSelector, page)
+		return nil, fmt.Errorf("no chapters found on %v: %v", page, describeNoMatch(doc, sel, cfg.ChapterListSelector, nil, "chapter list"))
 	}
 
 	return chapters, nil
@@ -186,10 +187,7 @@ func fetchImages(ctx context.Context, client *http.Client, chapterURL string, cf
 	if err != nil {
 		return nil, err
 	}
-	attr := cfg.ImageAttr
-	if attr == "" {
-		attr = defaultImageAttr
-	}
+	attrs := splitAttrs(cfg.ImageAttr)
 	page, doc, err := fetchDocument(ctx, client, chapterURL, cfg)
 	if err != nil {
 		return nil, err
@@ -197,17 +195,22 @@ func fetchImages(ctx context.Context, client *http.Client, chapterURL string, cf
 
 	images := make([]string, 0)
 	doc.FindMatcher(sel).Each(func(_ int, s *goquery.Selection) {
-		value, ok := s.Attr(attr)
-		if !ok {
-			return
-		}
-		if abs, ok := resolve(page, value); ok {
-			images = append(images, abs)
+		// Lazy-loading pages keep a placeholder in src and the real address in
+		// another attribute, so the first attribute with a usable address wins.
+		for _, attr := range attrs {
+			value, ok := s.Attr(attr)
+			if !ok {
+				continue
+			}
+			if abs, ok := resolve(page, value); ok {
+				images = append(images, abs)
+				return
+			}
 		}
 	})
 
 	if len(images) == 0 {
-		return nil, fmt.Errorf("no images matched %q with attribute %q on %v", cfg.ImageListSelector, attr, page)
+		return nil, fmt.Errorf("no images found on %v: %v", page, describeNoMatch(doc, sel, cfg.ImageListSelector, attrs, "images"))
 	}
 
 	return images, nil

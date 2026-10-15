@@ -204,7 +204,7 @@ func TestErrors(t *testing.T) {
 		{"no match", func() error {
 			_, err := FetchChapterList(ctx, srv.URL+"/manga", SourceConfig{ChapterListSelector: ".nothing"})
 			return err
-		}, "no chapters matched"},
+		}, "no chapters found"},
 		{"relative url without base", func() error {
 			_, err := FetchImages(ctx, "/read/1", SourceConfig{ImageListSelector: "img"})
 			return err

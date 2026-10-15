@@ -219,7 +219,7 @@ kojirou https://example.org/series/my-series -l en --source-config source.json -
 
 + `chapter_list_selector` :: Selects one element per chapter, which must be (or contain) a link
 + `image_list_selector` :: Selects one element per page image on a chapter page
-+ `image_attr` :: Attribute holding the image URL, e.g. `src` (default) or `data-original`
++ `image_attr` :: Attribute holding the image URL, e.g. `src` (default) or `data-original`; several can be listed, separated by commas, and the first one holding an http(s) address is used (handy for lazy-loading pages that keep a placeholder in `src`)
 + `title` :: Series title for output files (default: last part of the series URL)
 + `volume_ranges` :: Assign volumes by chapter number, as `volume:first-last` items, e.g. `"1:1-8, 2:9-17, 3:18-26"` (tried first)
 + `volume_regex` :: Take the volume from the chapter title or URL; the first capture group is the volume, e.g. `"Tập\\s*(\\d+)"` (tried after `volume_ranges`)
@@ -235,6 +235,7 @@ When a volume rule is set, chapters that no rule matches go into a separate `Spe
 Chapters taken from a second site with `--fill-config` ignore these rules: they join the volume of their neighbours on MangaDex.
 Pages are downloaded a few at a time and retried with backoff on HTTP 429 and 5xx responses.
 To try it without a real website, run `python3 contrib/selector_demo.py` and follow the command it prints.
+If a selector finds nothing, the error says what the page contained (its title, how many links and images it has, which attributes the matched elements carry) and whether it looks like a browser-check page, which this tool cannot pass.
 Only plain HTML is read, so sites that load images with JavaScript are not supported, and there are no covers.
 `--data-saver` has no effect on custom sources.
 

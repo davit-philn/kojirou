@@ -624,7 +624,7 @@ const SOURCE_FIELDS = [
   ["base_url", "Địa chỉ gốc (base_url)", "text", "https://ten-mien.com"],
   ["chapter_list_selector", "Selector danh sách chương", "text", ".list-chapter a"],
   ["image_list_selector", "Selector ảnh trang truyện", "text", ".reading-content img"],
-  ["image_attr", "Thuộc tính chứa URL ảnh", "text", "src hoặc data-original"],
+  ["image_attr", "Thuộc tính chứa URL ảnh (có thể nhiều, cách nhau bằng dấu phẩy)", "text", "data-original,data-src,src"],
   ["user_agent", "User-Agent (tuỳ chọn)", "text", ""],
   ["referer", "Referer (tuỳ chọn)", "text", ""],
   ["title", "Tên truyện (tuỳ chọn)", "text", ""],
