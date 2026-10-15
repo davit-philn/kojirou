@@ -154,6 +154,7 @@ kojirou serve --library D:\Manga --addr 127.0.0.1:9000
 + **Đang tải** :: Watch queued downloads, with progress per volume, and cancel them
 + **Thư viện** :: Download finished volumes from the library folder again through the browser
 + **Nguồn** :: Add websites described by CSS selectors (see below), test the selectors on a real page, then browse them like MangaDex
++ **Fill from another site** :: On a MangaDex series page, pick a saved source and the series page on that site to fill the chapters MangaDex lacks (see below); the link is remembered for next time
 
 The server has no login and only listens on your own computer by default.
 It rejects requests with an unexpected `Host` or `Origin` header and requires a custom header for every change, so other websites open in your browser cannot control it.
@@ -187,6 +188,10 @@ The configuration file is the same as for custom sources below, for example:
 
 Only use websites whose terms allow automated access and whose content you have the right to use.
 The option cannot be combined with `--source-config`.
+
+In the web interface the same thing is done on the series page of a MangaDex series, in the panel *Bù chương thiếu từ trang khác*: choose a source saved in the *Nguồn* tab, paste the series page URL on that site and click *Áp dụng và lưu liên kết*.
+Chapters taken from the other site are marked *nguồn bù*, and guessed volumes are listed under *Cần kiểm tra*.
+Links are stored in `links.json` next to `sources.json` in the configuration directory.
 
 ## Custom sources
 

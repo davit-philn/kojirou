@@ -61,6 +61,7 @@ type Server struct {
 	dex     *md.Client
 	jobs    *Manager
 	sources *SourceStore
+	links   *LinkStore
 	hosts   map[string]bool
 	static  http.Handler
 }
@@ -90,6 +91,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		dex:     cfg.Dex,
 		jobs:    NewManager(ctx, cfg.Runner),
 		sources: NewSourceStore(filepath.Join(cfg.ConfigDir, "sources.json")),
+		links:   NewLinkStore(filepath.Join(cfg.ConfigDir, "links.json")),
 		hosts:   allowedHosts(cfg.Addr),
 		static:  noCache(http.FileServer(http.FS(sub))),
 	}
@@ -124,6 +126,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sources", s.handleSaveSource)
 	mux.HandleFunc("DELETE /api/sources/{name}", s.handleDeleteSource)
 	mux.HandleFunc("POST /api/sources/test", s.handleTestSource)
+	mux.HandleFunc("GET /api/links", s.handleListLinks)
+	mux.HandleFunc("PUT /api/links/{id}", s.handleSaveLink)
+	mux.HandleFunc("DELETE /api/links/{id}", s.handleDeleteLink)
 	mux.Handle("/", s.static)
 
 	return s.guard(mux)
@@ -298,6 +303,7 @@ func atoiClamp(s string, lo, hi, def int) int {
 }
 
 type chapterDTO struct {
+	FromFill  bool      `json:"fromFill"`
 	ID        string    `json:"id"`
 	Number    string    `json:"number"`
 	Title     string    `json:"title"`
@@ -321,6 +327,8 @@ type seriesDTO struct {
 	Year        int         `json:"year,omitempty"`
 	Languages   []string    `json:"languages"`
 	Volumes     []volumeDTO `json:"volumes"`
+	// Notes lists volume placements that are guesses.
+	Notes []string `json:"notes"`
 }
 
 // resolveSource validates the source and identifier of a request.
@@ -360,11 +368,16 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	fill, err := s.resolveFill(cfg, q.Get("fillSource"), q.Get("fillUrl"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
-	dto := seriesDTO{ID: id, Source: source, Authors: []string{}, Languages: []string{}, Volumes: []volumeDTO{}}
+	dto := seriesDTO{ID: id, Source: source, Authors: []string{}, Languages: []string{}, Volumes: []volumeDTO{}, Notes: []string{}}
 	if cfg == nil {
 		dto.Source = mangadexSource
 		summary, err := s.dex.Describe(ctx, id)
@@ -376,9 +389,10 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		dto.Authors, dto.Status, dto.Year, dto.Languages = summary.Authors, summary.Status, summary.Year, summary.Languages
 	}
 
-	manga, err := job.Inspect(ctx, job.Options{
+	inspection, err := job.InspectDetailed(ctx, job.Options{
 		Identifier:  id,
 		Source:      cfg,
+		Fill:        fill,
 		Language:    lang,
 		Rank:        "most",
 		Format:      job.FormatCBZ,
@@ -388,6 +402,8 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
+	manga := inspection.Manga
+	dto.Notes = append(dto.Notes, inspection.Notes...)
 	if dto.Title == "" {
 		dto.Title = manga.Info.Title
 	}
@@ -399,6 +415,7 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 				groups = []string{}
 			}
 			v.Chapters = append(v.Chapters, chapterDTO{
+				FromFill:  inspection.Filled[ch.Info.ID],
 				ID:        ch.Info.ID,
 				Number:    ch.Info.Identifier.String(),
 				Title:     ch.Info.Title,
@@ -411,20 +428,52 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dto)
 }
 
+// resolveFill looks up the saved source and validates the page URL for the
+// fill option. Both empty means no fill source.
+func (s *Server) resolveFill(main *selector.SourceConfig, name, rawURL string) (*job.FillSource, error) {
+	if name == "" && rawURL == "" {
+		return nil, nil
+	}
+	if main != nil {
+		return nil, errors.New("a fill source can only be added to a MangaDex series")
+	}
+	if name == "" || rawURL == "" {
+		return nil, errors.New("choose both a source and the series page to fill from")
+	}
+	cfg, ok, err := s.sources.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("unknown source %q", name)
+	}
+	if u, err := url.Parse(rawURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, errors.New("the fill page must be an http(s) URL")
+	}
+
+	return &job.FillSource{Config: cfg, URL: rawURL}, nil
+}
+
+type fillRequest struct {
+	Source string `json:"source"`
+	URL    string `json:"url"`
+}
+
 type downloadRequest struct {
-	Source      string   `json:"source"`
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Lang        string   `json:"lang"`
-	ChapterIDs  []string `json:"chapterIds"`
-	Format      string   `json:"format"`
-	RightToLeft *bool    `json:"rightToLeft"`
-	Autocrop    bool     `json:"autocrop"`
-	Widepage    string   `json:"widepage"`
-	DataSaver   string   `json:"dataSaver"`
-	JPEGQuality int      `json:"jpegQuality"`
-	Lossless    bool     `json:"lossless"`
-	Force       bool     `json:"force"`
+	Fill        *fillRequest `json:"fill"`
+	Source      string       `json:"source"`
+	ID          string       `json:"id"`
+	Title       string       `json:"title"`
+	Lang        string       `json:"lang"`
+	ChapterIDs  []string     `json:"chapterIds"`
+	Format      string       `json:"format"`
+	RightToLeft *bool        `json:"rightToLeft"`
+	Autocrop    bool         `json:"autocrop"`
+	Widepage    string       `json:"widepage"`
+	DataSaver   string       `json:"dataSaver"`
+	JPEGQuality int          `json:"jpegQuality"`
+	Lossless    bool         `json:"lossless"`
+	Force       bool         `json:"force"`
 }
 
 var (
@@ -479,6 +528,12 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 	if err != nil {
 		return zero, err
 	}
+	var fill *job.FillSource
+	if req.Fill != nil {
+		if fill, err = s.resolveFill(cfg, req.Fill.Source, req.Fill.URL); err != nil {
+			return zero, err
+		}
+	}
 	lang := req.Lang
 	if lang == "" {
 		lang = "en"
@@ -522,6 +577,7 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 	return job.Options{
 		Identifier:  req.ID,
 		Source:      cfg,
+		Fill:        fill,
 		Language:    lang,
 		Rank:        "most",
 		ChapterIDs:  req.ChapterIDs,
@@ -674,4 +730,51 @@ func firstN[T any](list []T, n int) []T {
 	}
 
 	return list
+}
+
+func (s *Server) handleListLinks(w http.ResponseWriter, r *http.Request) {
+	all, err := s.links.All()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, all)
+}
+
+func (s *Server) handleSaveLink(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !uuidPattern.MatchString(id) {
+		writeError(w, http.StatusBadRequest, errors.New("invalid MangaDex series id"))
+		return
+	}
+	var link Link
+	if err := decodeBody(r, &link); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if link.Source == "" || link.URL == "" {
+		writeError(w, http.StatusBadRequest, errors.New("choose both a source and the series page to fill from"))
+		return
+	}
+	if _, err := s.resolveFill(nil, link.Source, link.URL); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.links.Save(id, link); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, link)
+}
+
+func (s *Server) handleDeleteLink(w http.ResponseWriter, r *http.Request) {
+	ok, err := s.links.Delete(r.PathValue("id"))
+	switch {
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err)
+	case !ok:
+		writeError(w, http.StatusNotFound, errors.New("no such link"))
+	default:
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
 }

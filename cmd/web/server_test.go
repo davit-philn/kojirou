@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/job"
 	md "github.com/leotaku/kojirou/mangadex"
 )
@@ -42,6 +43,8 @@ func newEnv(t *testing.T, mutate func(*Config)) *env {
 	}
 	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/fillseries":
+			_, _ = w.Write([]byte(`<div class="c"><a href="/c/5">Chapter 5</a><a href="/c/3">Chapter 3</a><a href="/c/2">Chapter 2</a></div>`))
 		case r.URL.Path == "/series":
 			_, _ = w.Write([]byte(`<div class="c"><a href="/c/2">Chapter 2</a><a href="/c/1">Chapter 1</a></div>`))
 		case strings.HasPrefix(r.URL.Path, "/c/"):
@@ -490,5 +493,186 @@ func TestFailuresAreLoggedToTheTerminal(t *testing.T) {
 	logs.Reset()
 	if rec := e.do("GET", "/api/config", nil); rec.Code != 200 || logs.Len() != 0 {
 		t.Errorf("successful requests should not be logged: %q", logs.String())
+	}
+}
+
+const mdID = "11111111-1111-4111-8111-111111111111"
+
+// fakeMangaDex serves just enough of the API for listing chapters:
+// chapters 1 and 2 in volume 1 and chapter 4 in volume 2, all Vietnamese.
+func fakeMangaDex(t *testing.T) *md.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/manga/"+mdID+"/feed":
+			chapter := func(id, num, vol string) string {
+				return `{"id":"` + id + `","type":"chapter","attributes":{"title":"","volume":"` + vol + `","chapter":"` + num +
+					`","pages":3,"translatedLanguage":"vi","publishAt":"2024-05-01T10:00:00+00:00"},` +
+					`"relationships":[{"id":"22222222-2222-4222-8222-222222222222","type":"scanlation_group"}]}`
+			}
+			_, _ = w.Write([]byte(`{"result":"ok","total":3,"data":[` +
+				chapter("c1", "1", "1") + `,` + chapter("c2", "2", "1") + `,` + chapter("c4", "4", "2") + `]}`))
+		case r.URL.Path == "/manga/"+mdID:
+			_, _ = w.Write([]byte(`{"result":"ok","data":{"id":"` + mdID + `","attributes":{"title":{"en":"Main Title"},"description":{}},` +
+				`"relationships":[{"id":"a1","type":"author","attributes":{"name":"Writer"}}]}}`))
+		case r.URL.Path == "/author":
+			_, _ = w.Write([]byte(`{"result":"ok","total":0,"data":[]}`))
+		case r.URL.Path == "/group":
+			_, _ = w.Write([]byte(`{"result":"ok","total":1,"data":[{"id":"22222222-2222-4222-8222-222222222222","attributes":{"name":"Grp"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	api, _ := url.Parse(srv.URL + "/")
+	covers, _ := url.Parse(srv.URL + "/covers/")
+	client := md.NewClient().WithBaseURLs(*api, *covers)
+	download.SetMangadexClient(client)
+	t.Cleanup(func() { download.SetMangadexClient(md.NewClient()) })
+
+	return client
+}
+
+func TestSeriesWithFillSource(t *testing.T) {
+	dex := fakeMangaDex(t)
+	e := newEnv(t, func(c *Config) { c.Dex = dex })
+	e.saveSource("demo")
+
+	q := url.Values{"source": {"mangadex"}, "id": {mdID}, "lang": {"vi"}}
+	plain := decode[seriesDTO](t, e.do("GET", "/api/series?"+q.Encode(), nil))
+	if len(plain.Volumes) != 2 || len(plain.Notes) != 0 {
+		t.Fatalf("without a fill source: %+v", plain)
+	}
+
+	q.Set("fillSource", "demo")
+	q.Set("fillUrl", e.site.URL+"/fillseries")
+	rec := e.do("GET", "/api/series?"+q.Encode(), nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	got := decode[seriesDTO](t, rec)
+
+	numbers := map[string]string{} // chapter number -> volume
+	filled := map[string]bool{}
+	for _, v := range got.Volumes {
+		for _, c := range v.Chapters {
+			numbers[c.Number] = v.ID
+			filled[c.Number] = c.FromFill
+		}
+	}
+	wantVol := map[string]string{"1": "1", "2": "1", "3": "1", "4": "2", "5": "Special"}
+	wantFill := map[string]bool{"1": false, "2": false, "3": true, "4": false, "5": true}
+	for n, v := range wantVol {
+		if numbers[n] != v || filled[n] != wantFill[n] {
+			t.Errorf("chapter %s: volume %q fromFill %v, want volume %q fromFill %v", n, numbers[n], filled[n], v, wantFill[n])
+		}
+	}
+	if len(numbers) != 5 {
+		t.Errorf("got chapters %v, want exactly 1-5 (chapter 2 exists on both sources)", numbers)
+	}
+	if len(got.Notes) != 1 || !strings.Contains(got.Notes[0], "chapter 3 ") {
+		t.Errorf("notes = %v, want one about chapter 3", got.Notes)
+	}
+	if got.Title != "Main Title" {
+		t.Errorf("title must come from MangaDex, got %q", got.Title)
+	}
+}
+
+func TestSeriesFillValidation(t *testing.T) {
+	fakeMangaDex(t)
+	e := newEnv(t, nil)
+	e.saveSource("demo")
+	page := url.QueryEscape(e.site.URL + "/fillseries")
+
+	for name, query := range map[string]string{
+		"only a source":         "source=mangadex&id=" + mdID + "&fillSource=demo",
+		"only a url":            "source=mangadex&id=" + mdID + "&fillUrl=" + page,
+		"unknown source":        "source=mangadex&id=" + mdID + "&fillSource=nope&fillUrl=" + page,
+		"non-http url":          "source=mangadex&id=" + mdID + "&fillSource=demo&fillUrl=file%3A%2F%2F%2Fetc%2Fpasswd",
+		"fill on selector main": "source=demo&id=" + page + "&fillSource=demo&fillUrl=" + page,
+	} {
+		if rec := e.do("GET", "/api/series?"+query, nil); rec.Code != 400 {
+			t.Errorf("%s: status %d, want 400 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestLinksCRUD(t *testing.T) {
+	e := newEnv(t, nil)
+	e.saveSource("demo")
+	link := map[string]string{"source": "demo", "url": e.site.URL + "/fillseries"}
+
+	if rec := e.do("PUT", "/api/links/"+mdID, link); rec.Code != 200 {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body)
+	}
+	all := decode[map[string]Link](t, e.do("GET", "/api/links", nil))
+	if all[mdID].Source != "demo" || all[mdID].URL != link["url"] {
+		t.Errorf("links = %v", all)
+	}
+
+	for name, tt := range map[string]struct {
+		path string
+		body map[string]string
+	}{
+		"bad id":         {"/api/links/not-a-uuid", link},
+		"unknown source": {"/api/links/" + mdID, map[string]string{"source": "nope", "url": link["url"]}},
+		"bad url":        {"/api/links/" + mdID, map[string]string{"source": "demo", "url": "ftp://x/y"}},
+		"missing fields": {"/api/links/" + mdID, map[string]string{}},
+	} {
+		if rec := e.do("PUT", tt.path, tt.body); rec.Code != 400 {
+			t.Errorf("%s: status %d, want 400", name, rec.Code)
+		}
+	}
+	if rec := e.do("PUT", "/api/links/"+mdID, nil); rec.Code != 400 {
+		t.Errorf("empty body: status %d", rec.Code)
+	}
+
+	if rec := e.do("DELETE", "/api/links/"+mdID, nil); rec.Code != 200 {
+		t.Errorf("delete: %d", rec.Code)
+	}
+	if rec := e.do("DELETE", "/api/links/"+mdID, nil); rec.Code != 404 {
+		t.Errorf("second delete: %d", rec.Code)
+	}
+	if all := decode[map[string]Link](t, e.do("GET", "/api/links", nil)); len(all) != 0 {
+		t.Errorf("links after delete: %v", all)
+	}
+}
+
+func TestDownloadRequestCarriesFillSource(t *testing.T) {
+	got := make(chan job.Options, 1)
+	e := newEnv(t, func(c *Config) {
+		c.Runner = func(ctx context.Context, opts job.Options, rep job.Reporter) (*job.Result, error) {
+			got <- opts
+			return &job.Result{}, nil
+		}
+	})
+	e.saveSource("demo")
+	page := e.site.URL + "/fillseries"
+
+	rec := e.do("POST", "/api/downloads", map[string]any{
+		"source": "mangadex", "id": mdID, "lang": "vi", "chapterIds": []string{"c1", page},
+		"fill": map[string]string{"source": "demo", "url": page},
+	})
+	if rec.Code != 202 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	opts := <-got
+	if opts.Fill == nil || opts.Fill.URL != page || opts.Fill.Config.ImageListSelector != "#r img" {
+		t.Errorf("fill source not passed to the job: %+v", opts.Fill)
+	}
+	if opts.Source != nil || opts.Identifier != mdID {
+		t.Errorf("MangaDex must stay the main source: %+v", opts)
+	}
+
+	for name, fill := range map[string]map[string]string{
+		"unknown source": {"source": "nope", "url": page},
+		"half a fill":    {"source": "demo"},
+	} {
+		rec := e.do("POST", "/api/downloads", map[string]any{
+			"source": "mangadex", "id": mdID, "chapterIds": []string{"c1"}, "fill": fill,
+		})
+		if rec.Code != 400 {
+			t.Errorf("%s: status %d, want 400", name, rec.Code)
+		}
 	}
 }

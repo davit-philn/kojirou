@@ -25,6 +25,38 @@ func Inspect(ctx context.Context, opts Options, rep Reporter) (*md.Manga, error)
 	return inspect(ctx, newContentSource(opts), opts, rep)
 }
 
+// Inspection is the result of InspectDetailed.
+type Inspection struct {
+	Manga *md.Manga
+	// Filled holds the IDs of chapters that come from the fill source.
+	Filled map[string]bool
+	// Notes lists decisions that may need a look, e.g. guessed volumes.
+	Notes []string
+}
+
+// InspectDetailed is like Inspect but also reports which chapters come from
+// the fill source and which volume placements are guesses.
+func InspectDetailed(ctx context.Context, opts Options, rep Reporter) (*Inspection, error) {
+	if err := opts.validate(); err != nil {
+		return nil, err
+	}
+	src := newContentSource(opts)
+	manga, err := inspect(ctx, src, opts, rep)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &Inspection{Manga: manga, Filled: map[string]bool{}}
+	if fs, ok := src.(*fillSource); ok {
+		for id := range fs.extraIDs {
+			res.Filled[id] = true
+		}
+		res.Notes = fs.Notes()
+	}
+
+	return res, nil
+}
+
 func inspect(ctx context.Context, src contentSource, opts Options, rep Reporter) (*md.Manga, error) {
 	manga, err := src.Skeleton(ctx, opts.Identifier)
 	if err != nil {

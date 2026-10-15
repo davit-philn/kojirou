@@ -269,12 +269,26 @@ async function seriesPage(params) {
   const options = Object.assign({}, defaultOptions, store.get("options", {}));
   const selected = new Set();
   let series = null;
+  // A second website that fills the chapters MangaDex lacks (MangaDex series only).
+  let fill = { source: "", url: "" };
+  let linked = false;
+  let savedSources = [];
+
+  const fillActive = () => source === "mangadex" && fill.source !== "" && fill.url !== "";
 
   const head = h("div");
   const chaptersBox = h("div");
   const bar = h("div", { class: "actionbar", hidden: true });
   app.append(head, chaptersBox, bar);
   head.append(spinner());
+  if (source === "mangadex") {
+    try {
+      const [sources, links] = await Promise.all([api("/api/sources"), api("/api/links")]);
+      savedSources = sources;
+      const link = links[id.toLowerCase()];
+      if (link) { fill = { source: link.source, url: link.url }; linked = true; }
+    } catch (_) { /* the fill option is optional */ }
+  }
   await loadSeries();
 
   async function loadSeries() {
@@ -283,10 +297,11 @@ async function seriesPage(params) {
     selected.clear();
     updateBar();
     const p = new URLSearchParams({ source, id, lang });
+    if (fillActive()) { p.set("fillSource", fill.source); p.set("fillUrl", fill.url); }
     try {
       series = await api("/api/series?" + p);
     } catch (err) {
-      head.replaceChildren(h("p", null, h("a", { href: "#/" }, "← Quay lại")));
+      head.replaceChildren(h("p", null, h("a", { href: "#/" }, "← Quay lại")), fillPanel());
       chaptersBox.replaceChildren(errorBox(err));
       return;
     }
@@ -317,7 +332,54 @@ async function seriesPage(params) {
           h("div", { class: "row", style: "margin-top:.75rem" },
             h("label", { class: "field" }, h("span", null, "Ngôn ngữ chương"),
               langSelect(lang, (v) => { lang = v; loadSeries(); }, series.languages))))),
+      fillPanel(),
       optionsPanel());
+  }
+
+  function fillPanel() {
+    if (source !== "mangadex") return null;
+    if (savedSources.length === 0) {
+      return h("div", { class: "panel" },
+        h("strong", null, "Bù chương thiếu từ trang khác"),
+        h("p", { class: "muted small" }, "MangaDex thiếu chương thì có thể lấy bù từ một trang khác của bạn. Chưa có nguồn nào: thêm ở tab ",
+          h("a", { href: "#/sources" }, "Nguồn"), " rồi quay lại đây."));
+    }
+    const select = h("select", { "aria-label": "Nguồn bù chương" },
+      h("option", { value: "" }, "— chọn nguồn —"),
+      ...savedSources.map((s) => h("option", { value: s.name }, s.name)));
+    select.value = fill.source;
+    const url = h("input", { type: "url", value: fill.url, "aria-label": "Địa chỉ trang truyện trên nguồn bù",
+      placeholder: "Địa chỉ trang liệt kê chương của truyện này trên nguồn đó" });
+    const read = () => ({ source: select.value, url: url.value.trim() });
+    const need = (v) => {
+      if (!v.source || !v.url) { toast("Chọn nguồn và nhập địa chỉ trang truyện trên nguồn đó", { bad: true }); return false; }
+      return true;
+    };
+    return h("details", { class: "panel", open: fillActive() },
+      h("summary", null, "Bù chương thiếu từ trang khác", linked ? h("span", { class: "chip ok", style: "margin-left:.5rem" }, "đã lưu liên kết") : null),
+      h("p", { class: "muted small" }, "Chương MangaDex có thì giữ nguyên, bìa và số tập lấy từ MangaDex. Chương MangaDex thiếu sẽ lấy từ trang này, ghép theo số chương."),
+      h("div", { class: "row" },
+        h("label", { class: "field" }, h("span", null, "Nguồn"), select),
+        h("label", { class: "field grow" }, h("span", null, "Địa chỉ trang truyện trên nguồn đó"), url)),
+      h("div", { class: "row", style: "margin-top:.75rem" },
+        h("button", { class: "btn", onclick: () => { const v = read(); if (need(v)) { fill = v; loadSeries(); } } }, "Áp dụng"),
+        h("button", { class: "btn primary", onclick: async () => {
+          const v = read();
+          if (!need(v)) return;
+          try {
+            await api("/api/links/" + encodeURIComponent(id), { method: "PUT", body: v });
+            fill = v; linked = true;
+            toast("Đã lưu liên kết. Lần sau mở truyện này sẽ tự bù chương.");
+            loadSeries();
+          } catch (err) { toast(err.message, { bad: true }); }
+        } }, "Áp dụng và lưu liên kết"),
+        fillActive() || linked ? h("button", { class: "btn danger", onclick: async () => {
+          try {
+            if (linked) await api("/api/links/" + encodeURIComponent(id), { method: "DELETE" });
+            fill = { source: "", url: "" }; linked = false;
+            loadSeries();
+          } catch (err) { toast(err.message, { bad: true }); }
+        } }, "Bỏ nguồn bù") : null));
   }
 
   function optionsPanel() {
@@ -359,6 +421,8 @@ async function seriesPage(params) {
       return;
     }
     const all = series.volumes.flatMap((v) => v.chapters);
+    const filledCount = all.filter((c) => c.fromFill).length;
+    const notes = (series.notes || []).map(describeNote);
     const checks = new Map(); // chapter id -> checkbox
     const volChecks = [];
     const syncVolumes = () => {
@@ -376,7 +440,8 @@ async function seriesPage(params) {
     const toolbar = h("div", { class: "row", style: "margin-top:1rem" },
       h("button", { class: "btn small", onclick: () => { all.forEach((c) => setChapter(c, true)); refresh(); } }, "Chọn tất cả"),
       h("button", { class: "btn small", onclick: () => { all.forEach((c) => setChapter(c, false)); refresh(); } }, "Bỏ chọn"),
-      h("span", { class: "muted small" }, `${all.length} chương, ${series.volumes.length} tập`),
+      h("span", { class: "muted small" }, `${all.length} chương, ${series.volumes.length} tập`,
+        filledCount ? ` (${filledCount} chương lấy từ nguồn bù)` : ""),
       h("span", { class: "range" },
         h("span", { class: "small muted" }, "Chọn khoảng:"), from, "–", to,
         h("button", { class: "btn small", onclick: () => {
@@ -392,16 +457,29 @@ async function seriesPage(params) {
         onchange: (e) => { vol.chapters.forEach((c) => setChapter(c, e.target.checked)); refresh(); } });
       volChecks.push({ box: volBox, chapters: vol.chapters });
       return h("details", { class: "volume", open: true },
-        h("summary", null, volBox, `Tập ${vol.id}`, h("span", { class: "muted small" }, ` · ${vol.chapters.length} chương`)),
+        h("summary", null, volBox, vol.id === "Special" ? "Chưa xếp vào tập (Special)" : `Tập ${vol.id}`, h("span", { class: "muted small" }, ` · ${vol.chapters.length} chương`)),
         vol.chapters.map((c) => {
           const box = h("input", { type: "checkbox", onchange: (e) => { setChapter(c, e.target.checked); refresh(); } });
           checks.set(c.id, box);
           return h("label", { class: "chapter" }, box,
-            h("span", { class: "name" }, `Chương ${c.number}`, c.title && c.title !== c.number ? ` — ${c.title}` : ""),
+            h("span", { class: "name" }, `Chương ${c.number}`, c.title && c.title !== c.number ? ` — ${c.title}` : "",
+              c.fromFill ? h("span", { class: "chip hl", style: "margin-left:.5rem" }, "nguồn bù") : null),
             h("span", { class: "meta" }, [c.groups.join(", "), formatDate(c.published)].filter(Boolean).join(" · ")));
         }));
     });
-    chaptersBox.replaceChildren(toolbar, ...list);
+    const noteBox = notes.length
+      ? h("div", { class: "notice", style: "margin-top:1rem" },
+          h("strong", null, "Cần kiểm tra:"), h("ul", { style: "margin:.4rem 0 0" }, notes.map((n) => h("li", null, n))))
+      : null;
+    chaptersBox.replaceChildren(toolbar, noteBox, ...list);
+  }
+
+  // The server reports guessed volumes in English; show them in Vietnamese.
+  function describeNote(note) {
+    const m = /^chapter (\S+) is not on the main source; its volume \((.*)\) is a guess/.exec(note);
+    return m
+      ? `Chương ${m[1]} chỉ có ở nguồn bù; tập ${m[2]} là đoán vì nằm giữa hai tập khác nhau. Kiểm tra lại nếu cần.`
+      : note;
   }
 
   function updateBar() {
@@ -420,6 +498,7 @@ async function seriesPage(params) {
         format: options.format, rightToLeft: options.rightToLeft, autocrop: options.autocrop,
         widepage: options.widepage, dataSaver: source === "mangadex" ? options.dataSaver : "no",
         jpegQuality: options.jpegQuality, lossless: options.lossless, force: options.force,
+        fill: fillActive() ? { source: fill.source, url: fill.url } : undefined,
       } });
       toast(`Đã thêm “${series.title}” vào hàng đợi.`, { link: { href: "#/downloads", text: "Xem tiến độ" } });
       pollBadge();
