@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -674,5 +675,92 @@ func TestDownloadRequestCarriesFillSource(t *testing.T) {
 		if rec.Code != 400 {
 			t.Errorf("%s: status %d, want 400", name, rec.Code)
 		}
+	}
+}
+
+// scanSite is a small manga-like website with a home page, series pages and
+// chapter pages, used to check automatic detection end to end.
+func scanSite(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case p == "/":
+			_, _ = w.Write([]byte(`<html><head><title>Home</title></head><body><div class="grid">` +
+				`<a href="/series/a">A</a><a href="/series/b">B</a><a href="/series/c">C</a><a href="/series/d">D</a></div></body></html>`))
+		case strings.HasPrefix(p, "/series/"):
+			var b strings.Builder
+			b.WriteString(`<html><body><h1>Series</h1><ul class="chapter-list">`)
+			for i := 6; i >= 1; i-- {
+				fmt.Fprintf(&b, `<li><a href="/read/a/%d">Chương %d</a></li>`, i, i)
+			}
+			b.WriteString(`</ul></body></html>`)
+			_, _ = w.Write([]byte(b.String()))
+		case strings.HasPrefix(p, "/read/"):
+			_, _ = w.Write([]byte(`<html><body><div class="reader"><img src="/i/1.jpg"><img src="/i/2.jpg"><img src="/i/3.jpg"></div></body></html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv
+}
+
+func TestDetectEndpointFindsAndSavesASource(t *testing.T) {
+	e := newEnv(t, nil)
+	site := scanSite(t)
+
+	// the user must confirm the rights first
+	if rec := e.do("POST", "/api/sources/detect", map[string]any{"url": site.URL}); rec.Code != 400 {
+		t.Errorf("without confirmation: status %d, want 400", rec.Code)
+	}
+	if rec := e.do("POST", "/api/sources/detect", map[string]any{"url": "nonsense", "confirmRights": true}); rec.Code != 422 {
+		t.Errorf("bad address: status %d, want 422", rec.Code)
+	}
+	if rec := e.do("POST", "/api/sources/detect", map[string]any{"url": site.URL, "confirmRights": true, "extra": 1}); rec.Code != 400 {
+		t.Errorf("unknown field: status %d, want 400", rec.Code)
+	}
+
+	rec := e.do("POST", "/api/sources/detect", map[string]any{"url": site.URL + "/", "confirmRights": true})
+	if rec.Code != 200 {
+		t.Fatalf("detect: %d %s", rec.Code, rec.Body)
+	}
+	det := decode[struct {
+		Config       json.RawMessage `json:"config"`
+		SeriesURL    string          `json:"seriesUrl"`
+		ChapterURL   string          `json:"chapterUrl"`
+		ChapterCount int             `json:"chapterCount"`
+		ImageCount   int             `json:"imageCount"`
+		Notes        []string        `json:"notes"`
+	}](t, rec)
+	if det.ChapterCount != 6 || det.ImageCount != 3 || len(det.Notes) == 0 {
+		t.Fatalf("detection = %+v", det)
+	}
+
+	// the proposal can be saved as it is and then works like any other source
+	if rec := e.do("POST", "/api/sources", map[string]any{"name": "scanned", "config": det.Config}); rec.Code != 200 {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.do("GET", "/api/series?source=scanned&id="+url.QueryEscape(det.SeriesURL), nil)
+	if rec.Code != 200 {
+		t.Fatalf("series: %d %s", rec.Code, rec.Body)
+	}
+	series := decode[seriesDTO](t, rec)
+	if n := len(series.Volumes[0].Chapters); n != 6 {
+		t.Errorf("the saved source lists %d chapters, want 6", n)
+	}
+}
+
+func TestDetectEndpointExplainsFailures(t *testing.T) {
+	e := newEnv(t, nil)
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><head><title>Nothing here</title></head><body><a href="/x">x</a></body></html>`))
+	}))
+	defer empty.Close()
+
+	rec := e.do("POST", "/api/sources/detect", map[string]any{"url": empty.URL, "confirmRights": true})
+	if rec.Code != 422 || !strings.Contains(rec.Body.String(), "no chapter list was found") {
+		t.Errorf("status %d: %s", rec.Code, rec.Body)
 	}
 }

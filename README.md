@@ -193,6 +193,15 @@ In the web interface the same thing is done on the series page of a MangaDex ser
 Chapters taken from the other site are marked *nguồn bù*, and guessed volumes are listed under *Cần kiểm tra*.
 Links are stored in `links.json` next to `sources.json` in the configuration directory.
 
+## Automatic source detection
+
+In the web interface, **Nguồn → Tự nhận diện từ trang chủ** takes only a website's home page.
+After you confirm that you may use the site's content, Kojirou reads `robots.txt`, opens a few pages of that site (at most 8, same host only, with a pause between requests), finds the chapter list and the page images, builds the selectors itself and saves the result as a source.
+If the titles contain `Tập N` / `Vol N` the volume rule is filled in too; otherwise the notes say how to add one.
+Detected selectors can be generic on small sites; use **Thử** to check them and edit them if needed.
+Pages blocked by `robots.txt`, sites that need JavaScript, logins or browser checks cannot be scanned.
+The same logic is available from Go as `selector.Detect`.
+
 ## Custom sources
 
 Besides MangaDex, Kojirou can read chapters from a website described by a JSON file of CSS selectors.

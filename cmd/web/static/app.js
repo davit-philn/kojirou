@@ -635,8 +635,12 @@ const SOURCE_FIELDS = [
   ["timeout_seconds", "Timeout mỗi request (giây)", "number", "30"],
 ];
 
+let lastDetection = null;
+
 async function sourcesPage() {
   const saved = await api("/api/sources");
+  const detection = lastDetection;
+  lastDetection = null;
   const inputs = {};
   const resultBox = h("div");
   const name = h("input", { type: "text", placeholder: "vd: trangA", "aria-label": "Tên nguồn" });
@@ -673,11 +677,55 @@ async function sourcesPage() {
         } }, "Xoá")))
     : [h("p", { class: "muted" }, "Chưa có nguồn nào. Thêm một nguồn bên dưới.")]);
 
+  // --- automatic detection from a home page ---
+  const scanURL = h("input", { type: "url", placeholder: "https://ten-mien-cua-ban.com", "aria-label": "Địa chỉ trang chủ của website" });
+  const rights = h("input", { type: "checkbox", onchange: sync });
+  const scanButton = h("button", { class: "btn primary", disabled: true, onclick: scan }, "Quét và lưu nguồn");
+  const scanBox = h("div");
+  function sync() { scanButton.disabled = !(rights.checked && scanURL.value.trim() !== ""); }
+  scanURL.addEventListener("input", sync);
+
+  async function scan() {
+    scanButton.disabled = true;
+    scanBox.replaceChildren(spinner(), h("p", { class: "muted small", style: "text-align:center" }, "Đang mở vài trang của website để tìm cấu trúc…"));
+    try {
+      const res = await api("/api/sources/detect", { method: "POST", timeout: 120000, body: { url: scanURL.value.trim(), confirmRights: rights.checked } });
+      const host = new URL(res.config.base_url).hostname;
+      const sourceName = (name.value.trim() || host.replace(/^www\./, "").replace(/[^A-Za-z0-9_-]/g, "-")).slice(0, 40);
+      await api("/api/sources", { method: "POST", body: { name: sourceName, config: res.config } });
+      lastDetection = Object.assign({ name: sourceName }, res);
+      toast(`Đã lưu nguồn “${sourceName}”.`);
+      render();
+    } catch (err) {
+      scanBox.replaceChildren(errorBox(err));
+      sync();
+    }
+  }
+
+  const summary = detection ? h("div", { class: "panel" },
+    h("strong", null, `Đã nhận diện và lưu nguồn “${detection.name}”`),
+    h("ul", null,
+      h("li", null, `Trang truyện dùng để kiểm tra: ${detection.seriesUrl} (${detection.chapterCount} chương)`),
+      h("li", null, `Trang chương mẫu: ${detection.chapterUrl} (${detection.imageCount} ảnh)`),
+      h("li", null, h("code", null, `chapter_list_selector: ${detection.config.chapter_list_selector}`)),
+      h("li", null, h("code", null, `image_list_selector: ${detection.config.image_list_selector}`), " · ", h("code", null, `image_attr: ${detection.config.image_attr}`)),
+      detection.notes.map((n) => h("li", { class: "muted" }, n))),
+    h("p", null, "Để dùng: vào ", h("a", { href: "#/" }, "Duyệt truyện"), `, chọn nguồn “${detection.name}” rồi dán địa chỉ một truyện của website.`)) : null;
+
   app.append(
     h("h1", null, "Nguồn"),
-    h("p", { class: "muted" }, "Ngoài MangaDex, bạn có thể thêm trang web bằng CSS selector. Chỉ dùng với trang mà điều khoản cho phép tải tự động và nội dung bạn có quyền đọc."),
+    h("p", { class: "muted" }, "Ngoài MangaDex, bạn có thể thêm trang web của mình. Chỉ dùng với trang mà điều khoản cho phép tải tự động và nội dung bạn có quyền đọc."),
+    summary,
     list,
-    h("h2", { style: "margin-top:2rem" }, "Thêm hoặc sửa nguồn"),
+    h("h2", { style: "margin-top:2rem" }, "Tự nhận diện từ trang chủ"),
+    h("div", { class: "panel" },
+      h("p", { class: "muted small", style: "margin-top:0" },
+        "Chỉ cần địa chỉ trang chủ (hoặc trang của một truyện). Công cụ đọc robots.txt, mở khoảng 3 đến 6 trang, tự tìm danh sách chương, ảnh và thuộc tính ảnh, kiểm tra thử rồi lưu nguồn. Chỉ đọc được HTML thuần, không vượt qua trang kiểm tra trình duyệt (anti-bot)."),
+      h("div", { class: "row" }, h("label", { class: "field grow" }, h("span", null, "Địa chỉ trang chủ"), scanURL)),
+      h("label", { class: "check", style: "margin-top:.6rem" }, rights, "Tôi có quyền dùng nội dung của website này và điều khoản của website cho phép tải tự động"),
+      h("div", { style: "margin-top:.75rem" }, scanButton),
+      scanBox),
+    h("h2", { style: "margin-top:2rem" }, "Thêm hoặc sửa nguồn thủ công"),
     h("details", { class: "panel" },
       h("summary", null, "Cách tìm selector"),
       h("ol", null,

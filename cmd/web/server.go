@@ -126,6 +126,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sources", s.handleSaveSource)
 	mux.HandleFunc("DELETE /api/sources/{name}", s.handleDeleteSource)
 	mux.HandleFunc("POST /api/sources/test", s.handleTestSource)
+	mux.HandleFunc("POST /api/sources/detect", s.handleDetectSource)
 	mux.HandleFunc("GET /api/links", s.handleListLinks)
 	mux.HandleFunc("PUT /api/links/{id}", s.handleSaveLink)
 	mux.HandleFunc("DELETE /api/links/{id}", s.handleDeleteLink)
@@ -777,4 +778,42 @@ func (s *Server) handleDeleteLink(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
+}
+
+type detectRequest struct {
+	URL           string `json:"url"`
+	ConfirmRights bool   `json:"confirmRights"`
+}
+
+// handleDetectSource scans a website and proposes a source configuration. It
+// only runs once the user has confirmed they may use the website's content.
+func (s *Server) handleDetectSource(w http.ResponseWriter, r *http.Request) {
+	var req detectRequest
+	if err := decodeBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if !req.ConfirmRights {
+		writeError(w, http.StatusBadRequest, errors.New("confirm that you may use the website's content and that its terms allow automated access"))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	res, err := selector.Detect(ctx, req.URL, selector.DetectOptions{})
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	// The proposal must be something that can be saved as it is.
+	if _, err := selector.ParseConfig(mustJSON(res.Config)); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Errorf("the detected configuration is not valid: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func mustJSON(v any) []byte {
+	data, _ := json.Marshal(v)
+	return data
 }

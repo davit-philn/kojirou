@@ -156,13 +156,21 @@ func fetchChapterList(ctx context.Context, client *http.Client, pageURL string, 
 		return nil, err
 	}
 
+	chapters := chaptersFromDoc(page, doc, sel)
+	if len(chapters) == 0 {
+		return nil, fmt.Errorf("no chapters found on %v: %v", page, describeNoMatch(doc, sel, cfg.ChapterListSelector, nil, "chapter list"))
+	}
+
+	return chapters, nil
+}
+
+// chaptersFromDoc lists the chapters the selector matches on a parsed page.
+func chaptersFromDoc(page *url.URL, doc *goquery.Document, sel cascadia.Selector) []Chapter {
 	chapters := make([]Chapter, 0)
 	doc.FindMatcher(sel).Each(func(_ int, s *goquery.Selection) {
 		href, ok := s.Attr("href")
-		title := s
 		if !ok {
-			title = s.Find("a[href]").First()
-			href, ok = title.Attr("href")
+			href, ok = s.Find("a[href]").First().Attr("href")
 		}
 		if !ok {
 			return
@@ -175,11 +183,7 @@ func fetchChapterList(ctx context.Context, client *http.Client, pageURL string, 
 		}
 	})
 
-	if len(chapters) == 0 {
-		return nil, fmt.Errorf("no chapters found on %v: %v", page, describeNoMatch(doc, sel, cfg.ChapterListSelector, nil, "chapter list"))
-	}
-
-	return chapters, nil
+	return chapters
 }
 
 func fetchImages(ctx context.Context, client *http.Client, chapterURL string, cfg SourceConfig) ([]string, error) {
@@ -193,10 +197,20 @@ func fetchImages(ctx context.Context, client *http.Client, chapterURL string, cf
 		return nil, err
 	}
 
+	images := imagesFromDoc(page, doc, sel, attrs)
+	if len(images) == 0 {
+		return nil, fmt.Errorf("no images found on %v: %v", page, describeNoMatch(doc, sel, cfg.ImageListSelector, attrs, "images"))
+	}
+
+	return images, nil
+}
+
+// imagesFromDoc lists the image addresses the selector matches on a parsed
+// page. Lazy-loading pages keep a placeholder in src and the real address in
+// another attribute, so the first attribute with a usable address wins.
+func imagesFromDoc(page *url.URL, doc *goquery.Document, sel cascadia.Selector, attrs []string) []string {
 	images := make([]string, 0)
 	doc.FindMatcher(sel).Each(func(_ int, s *goquery.Selection) {
-		// Lazy-loading pages keep a placeholder in src and the real address in
-		// another attribute, so the first attribute with a usable address wins.
 		for _, attr := range attrs {
 			value, ok := s.Attr(attr)
 			if !ok {
@@ -209,11 +223,7 @@ func fetchImages(ctx context.Context, client *http.Client, chapterURL string, cf
 		}
 	})
 
-	if len(images) == 0 {
-		return nil, fmt.Errorf("no images found on %v: %v", page, describeNoMatch(doc, sel, cfg.ImageListSelector, attrs, "images"))
-	}
-
-	return images, nil
+	return images
 }
 
 func compile(name, selector string) (cascadia.Selector, error) {
