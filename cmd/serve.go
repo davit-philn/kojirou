@@ -20,8 +20,6 @@ var (
 	serveLibrary   string
 	serveConfigDir string
 	serveNoOpen    bool
-	serveAPIURL    string
-	serveCoversURL string
 )
 
 var serveCmd = &cobra.Command{
@@ -47,10 +45,6 @@ func init() {
 	serveCmd.Flags().StringVar(&serveLibrary, "library", "library", "folder where downloads are stored")
 	serveCmd.Flags().StringVar(&serveConfigDir, "config-dir", "", "folder for saved sources (default: user config directory)")
 	serveCmd.Flags().BoolVar(&serveNoOpen, "no-open", false, "do not open the browser")
-	serveCmd.Flags().StringVar(&serveAPIURL, "api-url", "", "MangaDex API base URL")
-	serveCmd.Flags().StringVar(&serveCoversURL, "covers-url", "", "MangaDex covers base URL")
-	_ = serveCmd.Flags().MarkHidden("api-url")
-	_ = serveCmd.Flags().MarkHidden("covers-url")
 	rootCmd.AddCommand(serveCmd)
 }
 
@@ -64,19 +58,9 @@ func serve(cmd *cobra.Command) error {
 		configDir = filepath.Join(base, "kojirou")
 	}
 
-	dex := md.NewClient()
-	if serveAPIURL != "" || serveCoversURL != "" {
-		apiURL, err := url.Parse(orDefault(serveAPIURL, "https://api.mangadex.org/"))
-		if err != nil {
-			return fmt.Errorf("--api-url: %w", err)
-		}
-		coversURL, err := url.Parse(orDefault(serveCoversURL, md.CoverBaseURL.String()))
-		if err != nil {
-			return fmt.Errorf("--covers-url: %w", err)
-		}
-		dex = dex.WithBaseURLs(*apiURL, *coversURL)
+	if err := configureMangaDex(); err != nil {
+		return err
 	}
-	download.SetMangadexClient(dex)
 
 	ctx := cmd.Context()
 	srv, err := web.New(ctx, web.Config{
@@ -134,4 +118,23 @@ func orDefault(value, fallback string) string {
 	}
 
 	return value
+}
+
+// configureMangaDex points all MangaDex requests at --api-url and
+// --covers-url when given, e.g. for a mirror or a test server.
+func configureMangaDex() error {
+	if apiURLArg == "" && coversURLArg == "" {
+		return nil
+	}
+	apiURL, err := url.Parse(orDefault(apiURLArg, "https://api.mangadex.org/"))
+	if err != nil {
+		return fmt.Errorf("--api-url: %w", err)
+	}
+	coversURL, err := url.Parse(orDefault(coversURLArg, md.CoverBaseURL.String()))
+	if err != nil {
+		return fmt.Errorf("--covers-url: %w", err)
+	}
+	download.SetMangadexClient(md.NewClient().WithBaseURLs(*apiURL, *coversURL))
+
+	return nil
 }

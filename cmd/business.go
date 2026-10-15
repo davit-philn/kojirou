@@ -13,12 +13,21 @@ import (
 )
 
 func run(ctx context.Context) error {
+	if err := configureMangaDex(); err != nil {
+		return err
+	}
 	opts, err := optionsFromFlags()
 	if err != nil {
 		return err
 	}
 
-	_, err = job.Run(ctx, opts, cliReporter{})
+	res, err := job.Run(ctx, opts, cliReporter{})
+	if res != nil {
+		for _, note := range res.Notes {
+			fmt.Println("Note:", note)
+		}
+	}
+
 	return err
 }
 
@@ -64,6 +73,20 @@ func optionsFromFlags() (job.Options, error) {
 			return opts, fmt.Errorf("source: source config %q: %w", sourceConfigArg, err)
 		}
 		opts.Source = &cfg
+	}
+
+	if (fillConfigArg == "") != (fillURLArg == "") {
+		return opts, fmt.Errorf("--fill-config and --fill-url must be used together")
+	}
+	if fillConfigArg != "" {
+		if sourceConfigArg != "" {
+			return opts, fmt.Errorf("--fill-config needs MangaDex as the main source; do not combine it with --source-config")
+		}
+		cfg, err := selector.LoadConfig(fillConfigArg)
+		if err != nil {
+			return opts, fmt.Errorf("fill source: config %q: %w", fillConfigArg, err)
+		}
+		opts.Fill = &job.FillSource{Config: cfg, URL: fillURLArg}
 	}
 
 	return opts, nil

@@ -19,6 +19,10 @@ var (
 	widepageArg         WidepagePolicyArg
 	formatArg           FormatArg = FormatMOBI
 	sourceConfigArg     string
+	fillConfigArg       string
+	fillURLArg          string
+	apiURLArg           string
+	coversURLArg        string
 	jpegQualityArg      int
 	losslessArg         bool
 	kindleFolderModeArg bool
@@ -187,6 +191,12 @@ func init() {
 	rootCmd.Flags().BoolVarP(&autocropArg, "autocrop", "a", false, "crop whitespace from pages automatically")
 	rootCmd.Flags().VarP(&widepageArg, "widepage", "w", "split wide pages automatically")
 	rootCmd.Flags().StringVar(&sourceConfigArg, "source-config", "", "JSON file describing a CSS-selector source; <identifier> is then the series page URL")
+	rootCmd.Flags().StringVar(&fillConfigArg, "fill-config", "", "JSON file describing a second website; chapters MangaDex lacks are taken from it (needs --fill-url)")
+	rootCmd.Flags().StringVar(&fillURLArg, "fill-url", "", "series page on the --fill-config website")
+	rootCmd.PersistentFlags().StringVar(&apiURLArg, "api-url", "", "MangaDex API base URL")
+	rootCmd.PersistentFlags().StringVar(&coversURLArg, "covers-url", "", "MangaDex covers base URL")
+	_ = rootCmd.PersistentFlags().MarkHidden("api-url")
+	_ = rootCmd.PersistentFlags().MarkHidden("covers-url")
 	rootCmd.Flags().Var(&formatArg, "format", "output format: mobi or cbz")
 	rootCmd.Flags().IntVar(&jpegQualityArg, "jpeg-quality", cbz.DefaultJPEGQuality, "JPEG quality (1-100) for cbz output")
 	rootCmd.Flags().BoolVar(&losslessArg, "lossless", false, "store pages as PNG in cbz output")

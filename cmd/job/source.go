@@ -21,11 +21,18 @@ type contentSource interface {
 }
 
 func newContentSource(opts Options) contentSource {
+	lang := language.Make(opts.Language)
 	if opts.Source != nil {
-		return selectorSource{selector.NewProvider(*opts.Source, language.Make(opts.Language))}
+		return selectorSource{selector.NewProvider(*opts.Source, lang)}
 	}
 
-	return mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
+	main := mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
+	if opts.Fill != nil {
+		extra := selectorSource{selector.NewProvider(opts.Fill.Config, lang)}
+		return newFillSource(main, extra, opts.Fill.URL, lang)
+	}
+
+	return main
 }
 
 type mangadexSource struct {

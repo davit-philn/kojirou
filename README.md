@@ -161,6 +161,33 @@ Do not expose it to a network you do not trust.
 Saved sources live in your user configuration directory (`--config-dir` changes it).
 To look at the interface without internet access, run `python3 contrib/mock_mangadex.py 9100` and start the server with `--api-url http://127.0.0.1:9100/ --covers-url http://127.0.0.1:9100/covers/`.
 
+## Fill missing chapters from a second website
+
+MangaDex often lacks chapters.
+With `--fill-config` and `--fill-url`, chapters that MangaDex does not have are taken from a second website, while MangaDex stays the main source: its chapters win, and its volumes and covers are used.
+Chapters are matched by chapter number.
+A chapter that only the second website has goes into the volume of its neighbours, e.g. chapter 18 between two chapters of volume 3 goes into volume 3.
+If its neighbours belong to different volumes the earlier volume is used and a note is printed, and chapters newer than everything on MangaDex go to a separate `Special` volume.
+
+``` shell
+kojirou https://mangadex.org/title/<id>/<slug> -l vi --format cbz \
+  --fill-config other-site.json --fill-url https://other-site.example/series/my-series
+```
+
+The configuration file is the same as for custom sources below, for example:
+
+``` json
+{
+  "base_url": "https://other-site.example",
+  "chapter_list_selector": ".works-chapter-item .name-chap a",
+  "image_list_selector": ".story-see-content img",
+  "image_attr": "src"
+}
+```
+
+Only use websites whose terms allow automated access and whose content you have the right to use.
+The option cannot be combined with `--source-config`.
+
 ## Custom sources
 
 Besides MangaDex, Kojirou can read chapters from a website described by a JSON file of CSS selectors.

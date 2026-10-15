@@ -4,8 +4,10 @@
 package job
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 
 	"github.com/leotaku/kojirou/cmd/formats"
 	"github.com/leotaku/kojirou/cmd/formats/download"
@@ -27,6 +29,9 @@ type Options struct {
 	Identifier string
 	// Source selects a CSS-selector source instead of MangaDex.
 	Source *selector.SourceConfig
+	// Fill adds the chapters MangaDex lacks from a second website. MangaDex
+	// stays the main source for volumes and covers. Not combinable with Source.
+	Fill *FillSource
 
 	Language string
 	Rank     string
@@ -78,8 +83,24 @@ func (o Options) validate() error {
 	if o.Identifier == "" {
 		return errors.New("no series identifier given")
 	}
+	if o.Fill != nil {
+		if o.Source != nil {
+			return errors.New("a fill source needs MangaDex as the main source")
+		}
+		if u, err := url.Parse(o.Fill.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return errors.New("the fill source needs the series page as an http(s) URL")
+		}
+		if _, err := selector.ParseConfig(mustJSON(o.Fill.Config)); err != nil {
+			return fmt.Errorf("fill source: %w", err)
+		}
+	}
 
 	return nil
+}
+
+func mustJSON(v any) []byte {
+	data, _ := json.Marshal(v)
+	return data
 }
 
 // Progress reports the progress of one step.
@@ -102,6 +123,8 @@ type Result struct {
 	Title string
 	// Dir is where volumes were written; empty for dry runs.
 	Dir string
+	// Notes lists decisions that may need a look, e.g. guessed volumes.
+	Notes []string
 }
 
 // NopReporter discards all progress.

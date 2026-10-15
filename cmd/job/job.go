@@ -57,6 +57,9 @@ func Run(ctx context.Context, opts Options, rep Reporter) (*Result, error) {
 
 	rep.Summary(manga)
 	result := &Result{Title: manga.Info.Title}
+	if n, ok := src.(interface{ Notes() []string }); ok {
+		result.Notes = n.Notes()
+	}
 	if opts.DryRun {
 		return result, nil
 	}
