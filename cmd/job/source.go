@@ -26,7 +26,12 @@ func newContentSource(opts Options) contentSource {
 		site := selectorSource{selector.NewProvider(*opts.Source, lang)}
 		if opts.VolumesFrom != "" {
 			dex := mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
-			return newVolumeMapSource(site, dex, dex, opts.Identifier, opts.VolumesFrom, lang)
+			src := newVolumeMapSource(site, dex, dex, opts.Identifier, opts.VolumesFrom, lang)
+			if opts.Wikipedia != nil {
+				src.wiki = opts.Wikipedia
+			}
+
+			return src
 		}
 
 		return site

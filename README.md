@@ -207,7 +207,9 @@ The same logic is available from Go as `selector.Detect`.
 When a website has the chapters but no volumes, MangaDex can tell which chapter belongs to which volume.
 On the series page of a custom source open **Chia tập theo MangaDex**, search MangaDex by title (or paste its link) and choose the series.
 Chapters and images still come from the website; MangaDex only supplies the volume of each chapter number, the title, authors and the covers.
-Chapters MangaDex does not know take the volume of their neighbours (guesses are listed under "Cần kiểm tra"), and chapters newer than every volume go into `Special`.
+MangaDex often has no volume for most chapters of a long series, so the series title is also looked up on Wikipedia ("List of … chapters"), whose volume tables are complete for well-known series; where both know a chapter, MangaDex wins because the covers are filed under its volume numbers.
+This sends the series title to the Wikipedia API; the page it used is shown above the chapter list.
+Chapters neither knows take the volume of their neighbours (guesses are listed under "Cần kiểm tra"), and chapters newer than every volume go into `Special`.
 The choice is remembered in the browser for that series page.
 Nothing is uploaded to MangaDex.
 

@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/leotaku/kojirou/cmd/formats"
+	"github.com/leotaku/kojirou/cmd/formats/wikipedia"
 	md "github.com/leotaku/kojirou/mangadex"
 	"golang.org/x/text/language"
 )
@@ -31,7 +32,16 @@ type volumeMapSource struct {
 	siteURL string
 	dexID   string
 	lang    language.Tag
-	notes   []string
+	// wiki, if set, supplies the volumes MangaDex does not know.
+	wiki  volumeTabler
+	title string
+	notes []string
+	info  []string
+}
+
+// volumeTabler finds a volume table for a series title, e.g. on Wikipedia.
+type volumeTabler interface {
+	VolumeTable(ctx context.Context, title string) (*wikipedia.Table, error)
 }
 
 func newVolumeMapSource(site, dex contentSource, mapper volumeMapper, siteURL, dexID string, lang language.Tag) *volumeMapSource {
@@ -44,7 +54,12 @@ func (s *volumeMapSource) Name() string { return s.site.Name() + "+" + s.dex.Nam
 // MangaDex ID, which covers need; the site is addressed by siteURL, so the
 // identifier the job passes in (that URL) is not used.
 func (s *volumeMapSource) Skeleton(ctx context.Context, _ string) (*md.Manga, error) {
-	return s.dex.Skeleton(ctx, s.dexID)
+	manga, err := s.dex.Skeleton(ctx, s.dexID)
+	if err == nil {
+		s.title = manga.Info.Title
+	}
+
+	return manga, err
 }
 
 func (s *volumeMapSource) Chapters(ctx context.Context, dexID string) (md.ChapterList, error) {
@@ -57,7 +72,39 @@ func (s *volumeMapSource) Chapters(ctx context.Context, dexID string) (md.Chapte
 		return nil, fmt.Errorf("volume map: %w", err)
 	}
 
+	var wikiMessage string
+	if s.wiki != nil && s.title != "" {
+		table, err := s.wiki.VolumeTable(ctx, s.title)
+		switch {
+		case ctx.Err() != nil:
+			return nil, ctx.Err()
+		case err != nil:
+			wikiMessage = fmt.Sprintf("Wikipedia could not supply the volumes (%v)", err)
+		default:
+			// MangaDex wins where it knows a chapter: its volume numbers
+			// are the ones the covers are filed under.
+			merged := make(map[md.Identifier]md.Identifier, len(table.Volumes)+len(volumes))
+			for chapter, volume := range table.Volumes {
+				merged[chapter] = volume
+			}
+			fromWiki := 0
+			for chapter := range table.Volumes {
+				if _, ok := volumes[chapter]; !ok {
+					fromWiki++
+				}
+			}
+			for chapter, volume := range volumes {
+				merged[chapter] = volume
+			}
+			volumes = merged
+			s.info = append(s.info, fmt.Sprintf("Volumes of %d chapters come from the Wikipedia page %q; the rest from MangaDex", fromWiki, table.Page))
+		}
+	}
+
 	chapters, notes := assignVolumes(volumes, siteChapters, s.lang)
+	if wikiMessage != "" && len(notes) > 0 {
+		notes = append(notes, wikiMessage)
+	}
 	s.notes = notes
 
 	return chapters, nil
@@ -65,6 +112,9 @@ func (s *volumeMapSource) Chapters(ctx context.Context, dexID string) (md.Chapte
 
 // Notes lists placements that could not be decided with certainty.
 func (s *volumeMapSource) Notes() []string { return s.notes }
+
+// Info lists where the volumes came from.
+func (s *volumeMapSource) Info() []string { return s.info }
 
 func (s *volumeMapSource) Covers(ctx context.Context, manga *md.Manga, p formats.Progress) (md.ImageList, error) {
 	return s.dex.Covers(ctx, manga, p)

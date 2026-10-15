@@ -13,6 +13,7 @@ import (
 	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
 	"github.com/leotaku/kojirou/cmd/formats/selector"
+	"github.com/leotaku/kojirou/cmd/formats/wikipedia"
 	md "github.com/leotaku/kojirou/mangadex"
 )
 
@@ -37,6 +38,9 @@ type Options struct {
 	// come from the website while MangaDex decides the volumes and supplies
 	// the series' metadata and covers.
 	VolumesFrom string
+	// Wikipedia, if set, fills the volumes MangaDex does not know when
+	// VolumesFrom is used.
+	Wikipedia *wikipedia.Client
 
 	Language string
 	Rank     string

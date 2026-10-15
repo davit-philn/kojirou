@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/leotaku/kojirou/cmd/formats/download"
+	"github.com/leotaku/kojirou/cmd/formats/wikipedia"
 	"github.com/leotaku/kojirou/cmd/job"
 	md "github.com/leotaku/kojirou/mangadex"
 )
@@ -839,5 +840,47 @@ func TestDownloadRequestCarriesVolumesFrom(t *testing.T) {
 	}
 	if opts := <-got; opts.VolumesFrom != mdID || opts.Source == nil || opts.Identifier != page {
 		t.Errorf("volumes-from not passed to the job: %+v", opts)
+	}
+}
+
+func TestSeriesWithVolumesFromMangaDexAndWikipedia(t *testing.T) {
+	dex := fakeMangaDex(t)
+	wiki := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("action") {
+		case "query":
+			_, _ = w.Write([]byte(`{"query":{"search":[{"title":"List of Main Title chapters"}]}}`))
+		default:
+			// MangaDex only knows chapters 1, 2 and 4; Wikipedia also knows 3 and 5.
+			_, _ = w.Write([]byte(`{"parse":{"wikitext":"== Main Title volumes ==\n{{Graphic novel list\n|VolumeNumber = 1\n|ChapterListCol1 =\n*1. a\n*2. b\n*3. c\n}}\n{{Graphic novel list\n|VolumeNumber = 2\n|ChapterListCol1 =\n*4. d\n*5. e\n}}\n"}}`))
+		}
+	}))
+	t.Cleanup(wiki.Close)
+	e := newEnv(t, func(c *Config) { c.Dex = dex; c.Wikipedia = wikipedia.NewWithAPI(wiki.URL) })
+	e.saveSource("demo")
+
+	q := url.Values{"source": {"demo"}, "id": {e.site.URL + "/fillseries"}, "lang": {"vi"}, "volumesFrom": {mdID}}
+	rec := e.do("GET", "/api/series?"+q.Encode(), nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	got := decode[seriesDTO](t, rec)
+
+	numbers := map[string]string{}
+	for _, v := range got.Volumes {
+		for _, c := range v.Chapters {
+			numbers[c.Number] = v.ID
+		}
+	}
+	want := map[string]string{"2": "1", "3": "1", "5": "2"} // 3 and 5 only because of Wikipedia
+	for n, v := range want {
+		if numbers[n] != v {
+			t.Errorf("chapter %s in volume %q, want %q", n, numbers[n], v)
+		}
+	}
+	if len(got.Notes) != 0 {
+		t.Errorf("notes = %v, want none: nothing was guessed", got.Notes)
+	}
+	if len(got.Info) != 1 || !strings.Contains(got.Info[0], "List of Main Title chapters") {
+		t.Errorf("info = %v, want where the volumes came from", got.Info)
 	}
 }

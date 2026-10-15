@@ -23,6 +23,7 @@ import (
 	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
 	"github.com/leotaku/kojirou/cmd/formats/selector"
+	"github.com/leotaku/kojirou/cmd/formats/wikipedia"
 	"github.com/leotaku/kojirou/cmd/job"
 	md "github.com/leotaku/kojirou/mangadex"
 )
@@ -52,6 +53,9 @@ type Config struct {
 	Version    string
 	// Dex is the MangaDex client for search; defaults to the public API.
 	Dex *md.Client
+	// Wikipedia, if set, supplies volumes MangaDex does not know for series
+	// from your own sources. Nil disables it.
+	Wikipedia *wikipedia.Client
 	// Runner runs downloads; defaults to job.Run.
 	Runner Runner
 }
@@ -330,6 +334,8 @@ type seriesDTO struct {
 	Volumes     []volumeDTO `json:"volumes"`
 	// Notes lists volume placements that are guesses.
 	Notes []string `json:"notes"`
+	// Info says where information came from, e.g. which volumes.
+	Info []string `json:"info"`
 	// VolumesFrom is the MangaDex series whose volumes were applied; the
 	// title, description, cover and authors shown then come from MangaDex.
 	VolumesFrom string `json:"volumesFrom,omitempty"`
@@ -387,7 +393,7 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
-	dto := seriesDTO{ID: id, Source: source, Authors: []string{}, Languages: []string{}, Volumes: []volumeDTO{}, Notes: []string{}}
+	dto := seriesDTO{ID: id, Source: source, Authors: []string{}, Languages: []string{}, Volumes: []volumeDTO{}, Notes: []string{}, Info: []string{}}
 	if cfg == nil {
 		dto.Source = mangadexSource
 		summary, err := s.dex.Describe(ctx, id)
@@ -413,6 +419,7 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		Source:      cfg,
 		Fill:        fill,
 		VolumesFrom: volumesFrom,
+		Wikipedia:   s.cfg.Wikipedia,
 		Language:    lang,
 		Rank:        "most",
 		Format:      job.FormatCBZ,
@@ -424,6 +431,7 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	manga := inspection.Manga
 	dto.Notes = append(dto.Notes, inspection.Notes...)
+	dto.Info = append(dto.Info, inspection.Info...)
 	if dto.Title == "" {
 		dto.Title = manga.Info.Title
 	}
@@ -624,6 +632,7 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		Source:      cfg,
 		Fill:        fill,
 		VolumesFrom: volumesFrom,
+		Wikipedia:   s.cfg.Wikipedia,
 		Language:    lang,
 		Rank:        "most",
 		ChapterIDs:  req.ChapterIDs,

@@ -10,6 +10,7 @@ import (
 	"runtime"
 
 	"github.com/leotaku/kojirou/cmd/formats/download"
+	"github.com/leotaku/kojirou/cmd/formats/wikipedia"
 	"github.com/leotaku/kojirou/cmd/web"
 	md "github.com/leotaku/kojirou/mangadex"
 	"github.com/spf13/cobra"
@@ -69,6 +70,7 @@ func serve(cmd *cobra.Command) error {
 		ConfigDir:  configDir,
 		Version:    buildInfo.Main.Version,
 		Dex:        download.InteractiveClient(),
+		Wikipedia:  wikipedia.New(),
 	})
 	if err != nil {
 		return err

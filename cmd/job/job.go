@@ -36,6 +36,8 @@ type Inspection struct {
 	Filled map[string]bool
 	// Notes lists decisions that may need a look, e.g. guessed volumes.
 	Notes []string
+	// Info says where information came from, e.g. which volumes.
+	Info []string
 }
 
 // InspectDetailed is like Inspect but also reports which chapters come from
@@ -58,6 +60,9 @@ func InspectDetailed(ctx context.Context, opts Options, rep Reporter) (*Inspecti
 	}
 	if n, ok := src.(interface{ Notes() []string }); ok {
 		res.Notes = n.Notes()
+	}
+	if n, ok := src.(interface{ Info() []string }); ok {
+		res.Info = n.Info()
 	}
 
 	return res, nil

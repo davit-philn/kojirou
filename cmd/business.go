@@ -8,6 +8,7 @@ import (
 	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
 	"github.com/leotaku/kojirou/cmd/formats/selector"
+	"github.com/leotaku/kojirou/cmd/formats/wikipedia"
 	"github.com/leotaku/kojirou/cmd/job"
 	md "github.com/leotaku/kojirou/mangadex"
 )
@@ -84,6 +85,7 @@ func optionsFromFlags() (job.Options, error) {
 			return opts, fmt.Errorf("--volumes-from: %q is not a MangaDex series ID or link", volumesFromArg)
 		}
 		opts.VolumesFrom = id
+		opts.Wikipedia = wikipedia.New()
 	}
 
 	if (fillConfigArg == "") != (fillURLArg == "") {

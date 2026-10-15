@@ -551,7 +551,15 @@ async function seriesPage(params) {
       ? h("div", { class: "notice", style: "margin-top:1rem" },
           h("strong", null, "Cần kiểm tra:"), h("ul", { style: "margin:.4rem 0 0" }, notes.map((n) => h("li", null, n)), volumeHint))
       : null;
-    chaptersBox.replaceChildren(...nodes(toolbar, noteBox, list));
+    const infoBox = (series.info || []).length
+      ? h("p", { class: "muted small", style: "margin-top:.75rem" }, series.info.map(describeInfo).join(" "))
+      : null;
+    chaptersBox.replaceChildren(...nodes(toolbar, infoBox, noteBox, list));
+  }
+
+  function describeInfo(info) {
+    const m = /^Volumes of (\d+) chapters come from the Wikipedia page "(.*)"; the rest from MangaDex$/.exec(info);
+    return m ? `Số tập của ${m[1]} chương lấy từ trang Wikipedia “${m[2]}”, phần còn lại từ MangaDex.` : info;
   }
 
   // The server reports guessed volumes in English; show them in Vietnamese.
@@ -564,6 +572,8 @@ async function seriesPage(params) {
     }
     const v = /^chapter (\S+) is not in MangaDex's volumes; its volume \((.*)\) is a guess/.exec(note);
     if (v) return `MangaDex chưa xếp chương ${v[1]} vào tập; tập ${v[2]} là đoán theo các chương bên cạnh. Kiểm tra lại nếu cần.`;
+    const wiki = /^Wikipedia could not supply the volumes \((.*)\)$/.exec(note);
+    if (wiki) return `Không lấy được bảng tập từ Wikipedia (${wiki[1]}).`;
     if (note.startsWith("MangaDex has no volume information")) {
       return "MangaDex chưa có thông tin tập cho truyện này nên mọi chương nằm trong “Special”. Thử một truyện MangaDex khác, hoặc chia tập bằng quy tắc ở tab Nguồn.";
     }

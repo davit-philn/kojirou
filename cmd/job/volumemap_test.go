@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/leotaku/kojirou/cmd/formats"
+	"github.com/leotaku/kojirou/cmd/formats/wikipedia"
 	md "github.com/leotaku/kojirou/mangadex"
 	"golang.org/x/text/language"
 )
@@ -183,5 +184,82 @@ func TestCoversOfAVolumeMapSourceDoNotWaitForever(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("getCovers still waits for the covers")
+	}
+}
+
+type fakeTabler struct {
+	table *wikipedia.Table
+	err   error
+	asked string
+}
+
+func (f *fakeTabler) VolumeTable(_ context.Context, title string) (*wikipedia.Table, error) {
+	f.asked = title
+	return f.table, f.err
+}
+
+func wikiSource(t *testing.T, dexVolumes map[md.Identifier]md.Identifier, wiki *fakeTabler, site md.ChapterList) *volumeMapSource {
+	t.Helper()
+	dex := &recordingSource{
+		name:    "mangadex",
+		manga:   md.Manga{Info: md.MangaInfo{Title: "Blue Lock", ID: "dex-id"}},
+		volumes: dexVolumes,
+	}
+	src := newVolumeMapSource(&recordingSource{name: "selector", chapters: site}, dex, dex, "https://site/s", "dex-id", language.Vietnamese)
+	src.wiki = wiki
+	if _, err := src.Skeleton(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	return src
+}
+
+func TestVolumeMapUsesWikipediaForWhatMangaDexLacks(t *testing.T) {
+	vi := language.Vietnamese
+	site := md.ChapterList{chap("s1", "1", "1", vi), chap("s5", "5", "1", vi), chap("s9", "9", "1", vi), chap("s12", "12", "1", vi)}
+	wiki := &fakeTabler{table: &wikipedia.Table{
+		Page:    "List of Blue Lock chapters",
+		Volumes: volumeMap("1", "1", "2", "1", "3", "1", "4", "1", "5", "2", "6", "2", "9", "3", "10", "3"),
+	}}
+	// MangaDex only knows chapter 1 and disagrees about chapter 9.
+	src := wikiSource(t, volumeMap("1", "1", "9", "7"), wiki, site)
+
+	chapters, err := src.Chapters(context.Background(), "dex-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wiki.asked != "Blue Lock" {
+		t.Errorf("Wikipedia was asked for %q, want MangaDex's title", wiki.asked)
+	}
+	want := map[string]string{"1": "1", "5": "2", "9": "7", "12": "Special"}
+	for number, vol := range want {
+		if g := volumeOf(chapters, number); g != vol {
+			t.Errorf("chapter %s in volume %q, want %q (MangaDex first, then Wikipedia)", number, g, vol)
+		}
+	}
+	if len(src.Notes()) != 0 {
+		t.Errorf("notes = %q, want none", src.Notes())
+	}
+	if info := src.Info(); len(info) != 1 || !strings.Contains(info[0], "List of Blue Lock chapters") || !strings.Contains(info[0], "Volumes of 6 chapters") {
+		t.Errorf("info = %q", info)
+	}
+}
+
+func TestVolumeMapWikipediaFailureIsOnlyMentionedWhenItMatters(t *testing.T) {
+	vi := language.Vietnamese
+	failing := func() *fakeTabler { return &fakeTabler{err: fmt.Errorf("no page")} }
+
+	complete := wikiSource(t, volumeMap("1", "1", "2", "1"), failing(), md.ChapterList{chap("s1", "1", "1", vi), chap("s2", "2", "1", vi)})
+	if _, err := complete.Chapters(context.Background(), "dex-id"); err != nil || len(complete.Notes()) != 0 {
+		t.Errorf("err %v notes %q: a failing Wikipedia must be silent when MangaDex knows everything", err, complete.Notes())
+	}
+
+	gaps := wikiSource(t, volumeMap("1", "1", "9", "2"), failing(), md.ChapterList{chap("s1", "1", "1", vi), chap("s5", "5", "1", vi)})
+	if _, err := gaps.Chapters(context.Background(), "dex-id"); err != nil {
+		t.Fatal(err)
+	}
+	notes := strings.Join(gaps.Notes(), "|")
+	if !strings.Contains(notes, "chapter 5") || !strings.Contains(notes, "Wikipedia could not supply the volumes (no page)") {
+		t.Errorf("notes = %q, want the guess and why Wikipedia did not help", notes)
 	}
 }
