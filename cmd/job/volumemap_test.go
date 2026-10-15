@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/leotaku/kojirou/cmd/formats"
 	md "github.com/leotaku/kojirou/mangadex"
@@ -151,5 +152,36 @@ func TestVolumesFromNeedsAWebsite(t *testing.T) {
 	err := Options{Identifier: "x", Format: FormatCBZ, VolumesFrom: "abc"}.validate()
 	if err == nil || !strings.Contains(err.Error(), "website") {
 		t.Errorf("err = %v, want a hint that a website is needed", err)
+	}
+}
+
+// hangingCovers never answers until its context ends, like a stalled server.
+type hangingCovers struct{ *recordingSource }
+
+func (hangingCovers) Covers(ctx context.Context, _ *md.Manga, _ formats.Progress) (md.ImageList, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestCoversOfAVolumeMapSourceDoNotWaitForever(t *testing.T) {
+	old := coverTimeout
+	coverTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { coverTimeout = old })
+
+	dex := hangingCovers{&recordingSource{name: "mangadex"}}
+	src := newVolumeMapSource(&recordingSource{name: "selector"}, dex, dex.recordingSource, "https://site/s", "dex-id", language.Vietnamese)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := getCovers(context.Background(), src, Options{}, NopReporter{}, &md.Manga{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want the timeout as an error so that Run can carry on without covers")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("getCovers still waits for the covers")
 	}
 }

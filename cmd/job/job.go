@@ -6,6 +6,7 @@ import (
 	"image"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/leotaku/kojirou/cmd/filter"
 	"github.com/leotaku/kojirou/cmd/formats/cbz"
@@ -14,6 +15,9 @@ import (
 	md "github.com/leotaku/kojirou/mangadex"
 	"golang.org/x/text/language"
 )
+
+// coverTimeout bounds the cover download when covers are optional.
+var coverTimeout = 2 * time.Minute
 
 // Inspect fetches the series and the chapters that the options select,
 // without downloading any pages.
@@ -100,7 +104,13 @@ func Run(ctx context.Context, opts Options, rep Reporter) (*Result, error) {
 
 	covers, err := getCovers(ctx, src, opts, rep, manga)
 	if err != nil {
-		return nil, fmt.Errorf("covers: %w", err)
+		if _, ok := src.(*volumeMapSource); !ok || ctx.Err() != nil {
+			return nil, fmt.Errorf("covers: %w", err)
+		}
+		// The chapters come from another site; missing covers must not
+		// stop them from being downloaded.
+		result.Notes = append(result.Notes, fmt.Sprintf("covers from MangaDex could not be downloaded (%v); the volumes have no cover", err))
+		covers = nil
 	}
 	*manga = manga.WithCovers(covers)
 
@@ -222,6 +232,12 @@ func getCovers(
 	rep Reporter,
 	manga *md.Manga,
 ) (md.ImageList, error) {
+	if _, ok := src.(*volumeMapSource); ok {
+		// Covers are optional there, so do not wait for them indefinitely.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, coverTimeout)
+		defer cancel()
+	}
 	p := rep.Task("Covers", true)
 	covers, err := src.Covers(ctx, manga, p)
 	if err != nil {

@@ -26,6 +26,9 @@ const (
 	DataSaverPolicyFallback
 )
 
+// attemptTimeout limits one request to an image or API server.
+const attemptTimeout = 60 * time.Second
+
 const (
 	maxJobsChapter = 8
 	maxJobsImage   = 16
@@ -49,6 +52,9 @@ func init() {
 	retry.RetryWaitMin = time.Second * 5
 	retry.Backoff = retryablehttp.LinearJitterBackoff
 	retry.CheckRetry = bodyReadableErrorPolicy
+	// Per attempt, including reading the body: a stalled connection must
+	// not leave a download hanging forever.
+	retry.HTTPClient.Timeout = attemptTimeout
 
 	httpClient = retry.StandardClient()
 
