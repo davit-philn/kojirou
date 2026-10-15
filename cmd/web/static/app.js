@@ -467,9 +467,14 @@ async function seriesPage(params) {
             h("span", { class: "meta" }, [c.groups.join(", "), formatDate(c.published)].filter(Boolean).join(" · ")));
         }));
     });
-    const noteBox = notes.length
+    // A selector source that gives no volume information puts everything in volume 1.
+    const volumeHint = source !== "mangadex" && series.volumes.length === 1 && all.length >= 10
+      ? h("li", null, `Tất cả ${all.length} chương đang nằm trong một tập vì nguồn này chưa có quy tắc chia tập. Vào tab `,
+          h("a", { href: "#/sources" }, "Nguồn"), ", bấm Sửa ở nguồn này rồi điền “Chia tập theo số chương” (ví dụ 1:1-8, 2:9-17), “Regex lấy số tập” hoặc “Số chương mỗi tập”.")
+      : null;
+    const noteBox = notes.length || volumeHint
       ? h("div", { class: "notice", style: "margin-top:1rem" },
-          h("strong", null, "Cần kiểm tra:"), h("ul", { style: "margin:.4rem 0 0" }, notes.map((n) => h("li", null, n))))
+          h("strong", null, "Cần kiểm tra:"), h("ul", { style: "margin:.4rem 0 0" }, notes.map((n) => h("li", null, n)), volumeHint))
       : null;
     chaptersBox.replaceChildren(toolbar, noteBox, ...list);
   }
@@ -623,7 +628,9 @@ const SOURCE_FIELDS = [
   ["user_agent", "User-Agent (tuỳ chọn)", "text", ""],
   ["referer", "Referer (tuỳ chọn)", "text", ""],
   ["title", "Tên truyện (tuỳ chọn)", "text", ""],
-  ["chapters_per_volume", "Số chương mỗi tập (0 = một tập)", "number", "0"],
+  ["volume_ranges", "Chia tập theo số chương (tuỳ chọn)", "text", "1:1-8, 2:9-17, 3:18-26"],
+  ["volume_regex", "Regex lấy số tập từ tiêu đề hoặc URL (tuỳ chọn)", "text", "Tập\\s*(\\d+)"],
+  ["chapters_per_volume", "Số chương mỗi tập (cho chương không khớp quy tắc nào)", "number", "0"],
   ["max_concurrent_downloads", "Tải song song tối đa (1-8)", "number", "4"],
   ["timeout_seconds", "Timeout mỗi request (giây)", "number", "30"],
 ];

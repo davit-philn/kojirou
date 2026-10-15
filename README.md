@@ -221,11 +221,18 @@ kojirou https://example.org/series/my-series -l en --source-config source.json -
 + `image_list_selector` :: Selects one element per page image on a chapter page
 + `image_attr` :: Attribute holding the image URL, e.g. `src` (default) or `data-original`
 + `title` :: Series title for output files (default: last part of the series URL)
-+ `chapters_per_volume` :: Group chapters into volumes of this size (default: a single volume)
++ `volume_ranges` :: Assign volumes by chapter number, as `volume:first-last` items, e.g. `"1:1-8, 2:9-17, 3:18-26"` (tried first)
++ `volume_regex` :: Take the volume from the chapter title or URL; the first capture group is the volume, e.g. `"Tập\\s*(\\d+)"` (tried after `volume_ranges`)
++ `chapters_per_volume` :: Group the chapters that no rule above matched into volumes of this size
 + `max_concurrent_downloads` :: Parallel image downloads, 1 to 8 (default: 4)
 + `timeout_seconds` :: Timeout per request (default: 30)
 
-Chapter numbers are taken from the first number in each chapter title.
+Chapter numbers are taken from the number after a chapter keyword (`Chương`, `Chapter`, `Ch`, `Ep`...), or else from the first number in the title.
+
+Without any volume rule every chapter goes into volume 1.
+If the website does not tell the volumes, split them yourself with `volume_ranges` (for example following the official release list), or let `volume_regex` read them from titles that contain the volume.
+When a volume rule is set, chapters that no rule matches go into a separate `Special` volume unless `chapters_per_volume` is set.
+Chapters taken from a second site with `--fill-config` ignore these rules: they join the volume of their neighbours on MangaDex.
 Pages are downloaded a few at a time and retried with backoff on HTTP 429 and 5xx responses.
 To try it without a real website, run `python3 contrib/selector_demo.py` and follow the command it prints.
 Only plain HTML is read, so sites that load images with JavaScript are not supported, and there are no covers.

@@ -49,8 +49,15 @@ type SourceConfig struct {
 	// Title is the series title used for output files. Defaults to the last
 	// path segment of the series URL.
 	Title string `json:"title"`
-	// ChaptersPerVolume groups chapters into volumes of this size. Zero puts
-	// every chapter into volume 1.
+	// VolumeRanges assigns volumes by chapter number, e.g. "1:1-8, 2:9-17"
+	// (volume:firstChapter-lastChapter). Tried first.
+	VolumeRanges string `json:"volume_ranges"`
+	// VolumeRegex takes the volume from the chapter title or URL: its first
+	// capture group is the volume, e.g. `Tập\s*(\d+)`. Tried after VolumeRanges.
+	VolumeRegex string `json:"volume_regex"`
+	// ChaptersPerVolume groups the remaining chapters into volumes of this
+	// size. If it is zero, chapters that no rule above matched go into the
+	// "Special" volume when a rule is set, and into volume 1 when none is.
 	ChaptersPerVolume int `json:"chapters_per_volume"`
 	// MaxConcurrentDownloads bounds parallel image downloads, to stay clear
 	// of rate limits. Defaults to 4, at most 8.

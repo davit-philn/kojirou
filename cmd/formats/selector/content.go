@@ -28,20 +28,28 @@ const (
 	baseRetryWait = 2 * time.Second
 )
 
-var numberPattern = regexp.MustCompile(`\d+(?:\.\d+)?`)
+var (
+	numberPattern = regexp.MustCompile(`\d+(?:\.\d+)?`)
+	// chapterNumberPattern finds the number after a chapter keyword, so that
+	// in "Tập 3 - Chương 7" the chapter is 7 and not the volume number 3.
+	chapterNumberPattern = regexp.MustCompile(`(?i)\b(?:chương|chuong|chapter|chap|ch|episode|ep|#)\.?\s*(\d+(?:\.\d+)?)`)
+)
 
 // Provider adapts a Source to the manga model used by the rest of the
 // application. The "identifier" of a series is the URL of its chapter list.
 type Provider struct {
-	source *Source
-	cfg    SourceConfig
-	lang   language.Tag
+	source   *Source
+	cfg      SourceConfig
+	lang     language.Tag
+	rules    *volumeRules
+	rulesErr error
 
 	retryWait time.Duration
 }
 
 func NewProvider(cfg SourceConfig, lang language.Tag) *Provider {
-	return &Provider{source: New(cfg), cfg: cfg, lang: lang, retryWait: baseRetryWait}
+	rules, err := compileVolumeRules(cfg)
+	return &Provider{source: New(cfg), cfg: cfg, lang: lang, rules: rules, rulesErr: err, retryWait: baseRetryWait}
 }
 
 func (p *Provider) Skeleton(_ context.Context, seriesURL string) (*md.Manga, error) {
@@ -57,6 +65,9 @@ func (p *Provider) Skeleton(_ context.Context, seriesURL string) (*md.Manga, err
 }
 
 func (p *Provider) Chapters(ctx context.Context, seriesURL string) (md.ChapterList, error) {
+	if p.rulesErr != nil {
+		return nil, p.rulesErr
+	}
 	chapters, err := p.source.FetchChapterList(ctx, seriesURL)
 	if err != nil {
 		return nil, err
@@ -67,24 +78,39 @@ func (p *Provider) Chapters(ctx context.Context, seriesURL string) (md.ChapterLi
 	// Sites usually list the newest chapter first, so number from the end.
 	for i, ch := range chapters {
 		position := len(chapters) - i
-		volume := 1
-		if n := p.cfg.ChaptersPerVolume; n > 0 {
-			volume = (position-1)/n + 1
-		}
+		identifier := chapterIdentifier(ch.Title, position)
 		result = append(result, md.Chapter{
 			Info: md.ChapterInfo{
 				Title:            ch.Title,
 				Language:         p.lang,
 				GroupNames:       []string{group},
 				ID:               ch.URL,
-				Identifier:       chapterIdentifier(ch.Title, position),
-				VolumeIdentifier: md.NewIdentifier(strconv.Itoa(volume)),
+				Identifier:       identifier,
+				VolumeIdentifier: p.volumeFor(ch, identifier, position),
 			},
 			Pages: make(map[int]image.Image),
 		})
 	}
 
 	return result, nil
+}
+
+// volumeFor applies the volume rules of the config; see SourceConfig.
+func (p *Provider) volumeFor(ch formats.Chapter, id md.Identifier, position int) md.Identifier {
+	number, err := strconv.ParseFloat(id.String(), 64)
+	if label, ok := p.rules.volumeFor(ch.Title, ch.URL, number, err == nil); ok {
+		return md.NewIdentifier(label)
+	}
+
+	switch {
+	case p.cfg.ChaptersPerVolume > 0:
+		return md.NewIdentifier(strconv.Itoa((position-1)/p.cfg.ChaptersPerVolume + 1))
+	case p.rules.configured():
+		// Rules exist but none matched this chapter: not in a volume yet.
+		return md.NewWithFallback("", "Special")
+	default:
+		return md.NewIdentifier("1")
+	}
 }
 
 // Covers returns no covers: a generic selector source has no notion of them.
@@ -268,9 +294,13 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// chapterIdentifier uses the first number in the title, falling back to the
-// chapter's position in the series.
+// chapterIdentifier uses the number after a chapter keyword (Chương, Chapter,
+// Ch, Ep...), else the first number in the title, else the chapter's position
+// in the series.
 func chapterIdentifier(title string, position int) md.Identifier {
+	if m := chapterNumberPattern.FindStringSubmatch(title); m != nil {
+		return md.NewIdentifier(m[1])
+	}
 	if m := numberPattern.FindString(title); m != "" {
 		return md.NewIdentifier(m)
 	}

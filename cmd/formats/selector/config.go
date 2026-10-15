@@ -40,6 +40,9 @@ func ParseConfig(data []byte) (SourceConfig, error) {
 	if cfg.TimeoutSeconds < 0 {
 		return SourceConfig{}, fmt.Errorf("timeout_seconds must not be negative")
 	}
+	if _, err := compileVolumeRules(cfg); err != nil {
+		return SourceConfig{}, err
+	}
 	if cfg.ChaptersPerVolume < 0 {
 		return SourceConfig{}, fmt.Errorf("chapters_per_volume must not be negative")
 	}
