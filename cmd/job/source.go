@@ -26,7 +26,7 @@ func newContentSource(opts Options) contentSource {
 		site := selectorSource{selector.NewProvider(*opts.Source, lang)}
 		if opts.VolumesFrom != "" {
 			dex := mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
-			return newVolumeMapSource(site, dex, opts.Identifier, opts.VolumesFrom, lang)
+			return newVolumeMapSource(site, dex, dex, opts.Identifier, opts.VolumesFrom, lang)
 		}
 
 		return site
@@ -66,6 +66,11 @@ func (s mangadexSource) Chapters(ctx context.Context, id string) (md.ChapterList
 
 func (mangadexSource) Covers(ctx context.Context, manga *md.Manga, p formats.Progress) (md.ImageList, error) {
 	return download.MangadexCovers(ctx, manga, p)
+}
+
+// VolumeMap says which volume each chapter number belongs to on MangaDex.
+func (s mangadexSource) VolumeMap(ctx context.Context, id string) (map[md.Identifier]md.Identifier, error) {
+	return s.client().FetchVolumeMap(ctx, id)
 }
 
 func (s mangadexSource) Pages(ctx context.Context, chapters md.ChapterList, p formats.Progress) (md.ImageList, error) {

@@ -73,6 +73,13 @@ class H(http.server.BaseHTTPRequestHandler):
         if path == "/author":
             ids = q.get("ids[]", [])
             return self.send({"result": "ok", "total": len(ids), "data": [{"id": i, "attributes": {"name": "Test Author"}} for i in ids]})
+        m = re.fullmatch(r"/manga/([^/]+)/aggregate", path)
+        if m and m.group(1) in SERIES:
+            volumes = {}
+            for c in SERIES[m.group(1)]["chapters"]:
+                v = volumes.setdefault(c["volume"], {"volume": c["volume"], "chapters": {}})
+                v["chapters"][c["chapter"]] = {"chapter": c["chapter"]}
+            return self.send({"result": "ok", "volumes": volumes})
         m = re.fullmatch(r"/manga/([^/]+)/feed", path)
         if m and m.group(1) == uid(8):  # the last series always fails, to try the error display
             return self.send({"errors": [{"detail": "simulated feed failure"}]}, code=500)

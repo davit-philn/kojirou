@@ -513,6 +513,12 @@ func fakeMangaDex(t *testing.T) *md.Client {
 			}
 			_, _ = w.Write([]byte(`{"result":"ok","total":3,"data":[` +
 				chapter("c1", "1", "1") + `,` + chapter("c2", "2", "1") + `,` + chapter("c4", "4", "2") + `]}`))
+		case r.URL.Path == "/manga/"+mdID+"/aggregate":
+			// MangaDex knows chapter 3 and 6 only here (e.g. English or external ones).
+			_, _ = w.Write([]byte(`{"result":"ok","volumes":{` +
+				`"1":{"volume":"1","chapters":{"1":{"chapter":"1"},"2":{"chapter":"2"}}},` +
+				`"2":{"volume":"2","chapters":{"4":{"chapter":"4"}}},` +
+				`"none":{"volume":"none","chapters":{"6":{"chapter":"6"}}}}}`))
 		case r.URL.Path == "/manga/"+mdID:
 			_, _ = w.Write([]byte(`{"result":"ok","data":{"id":"` + mdID + `","attributes":{"title":{"en":"Main Title"},"description":{}},` +
 				`"relationships":[{"id":"a1","type":"author","attributes":{"name":"Writer"}}]}}`))

@@ -139,3 +139,15 @@ func (c *Client) doJSON(ctx context.Context, method, ref string, result, body in
 
 	return nil
 }
+
+// GetAggregate returns the raw volume/chapter overview of a series. Without a
+// language filter it covers every translation, including chapters hosted
+// elsewhere that the feed leaves out.
+func (c *Client) GetAggregate(ctx context.Context, mangaID string) (json.RawMessage, error) {
+	v := new(struct {
+		Volumes json.RawMessage `json:"volumes"`
+	})
+	err := c.doJSON(ctx, "GET", "/manga/"+mangaID+"/aggregate", v, nil)
+
+	return v.Volumes, err
+}
