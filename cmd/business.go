@@ -75,6 +75,17 @@ func optionsFromFlags() (job.Options, error) {
 		opts.Source = &cfg
 	}
 
+	if volumesFromArg != "" {
+		if sourceConfigArg == "" {
+			return opts, fmt.Errorf("--volumes-from needs a website as the main source (--source-config)")
+		}
+		id, ok := md.ParseSeriesID(volumesFromArg)
+		if !ok {
+			return opts, fmt.Errorf("--volumes-from: %q is not a MangaDex series ID or link", volumesFromArg)
+		}
+		opts.VolumesFrom = id
+	}
+
 	if (fillConfigArg == "") != (fillURLArg == "") {
 		return opts, fmt.Errorf("--fill-config and --fill-url must be used together")
 	}

@@ -10,6 +10,9 @@ const LANGS = [
   ["de", "Deutsch"], ["id", "Indonesia"], ["th", "ไทย"], ["ru", "Русский"],
 ];
 
+// nodes drops the empty entries (null, false) that replaceChildren would print as text.
+const nodes = (...list) => list.flat().filter((n) => n !== null && n !== undefined && n !== false);
+
 function h(tag, props, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -273,6 +276,13 @@ async function seriesPage(params) {
   let fill = { source: "", url: "" };
   let linked = false;
   let savedSources = [];
+  // MangaDex series that decides the volumes of a series from your own source.
+  let volumesFrom = source === "mangadex" ? "" : (store.get("volumesFrom", {})[id] || "");
+  let siteTitle = "";
+  let candidates = null; // search results shown in the panel; null = not searched yet
+  let searching = false;
+  let searchSeq = 0; // a newer search makes an older answer obsolete
+  let volPanel = null;
 
   const fillActive = () => source === "mangadex" && fill.source !== "" && fill.url !== "";
 
@@ -298,13 +308,15 @@ async function seriesPage(params) {
     updateBar();
     const p = new URLSearchParams({ source, id, lang });
     if (fillActive()) { p.set("fillSource", fill.source); p.set("fillUrl", fill.url); }
+    if (volumesFrom) p.set("volumesFrom", volumesFrom);
     try {
       series = await api("/api/series?" + p);
     } catch (err) {
-      head.replaceChildren(h("p", null, h("a", { href: "#/" }, "← Quay lại")), fillPanel());
+      head.replaceChildren(...nodes(h("p", null, h("a", { href: "#/" }, "← Quay lại")), fillPanel(), volumesPanel()));
       chaptersBox.replaceChildren(errorBox(err));
       return;
     }
+    if (!siteTitle && !series.volumesFrom) siteTitle = series.title;
     renderHead();
     renderChapters();
   }
@@ -315,7 +327,7 @@ async function seriesPage(params) {
       const clamped = desc.classList.toggle("clamp");
       more.textContent = clamped ? "Xem thêm" : "Thu gọn";
     } }, "Xem thêm");
-    head.replaceChildren(
+    head.replaceChildren(...nodes(
       h("p", null, h("a", { href: "#/" }, "← Quay lại")),
       h("div", { class: "series-head" },
         series.coverUrl
@@ -333,7 +345,70 @@ async function seriesPage(params) {
             h("label", { class: "field" }, h("span", null, "Ngôn ngữ chương"),
               langSelect(lang, (v) => { lang = v; loadSeries(); }, series.languages))))),
       fillPanel(),
-      optionsPanel());
+      volumesPanel(),
+      optionsPanel()));
+  }
+
+  function setVolumesFrom(dexId) {
+    volumesFrom = dexId;
+    const saved = store.get("volumesFrom", {});
+    if (dexId) saved[id] = dexId; else delete saved[id];
+    store.set("volumesFrom", saved);
+    candidates = null;
+    loadSeries();
+  }
+
+  function refreshVolumesPanel() {
+    const old = volPanel;
+    const fresh = volumesPanel();
+    if (old && old.isConnected) old.replaceWith(fresh);
+  }
+
+  function volumesPanel() {
+    if (source === "mangadex") return null;
+    const query = h("input", { type: "search", value: siteTitle, "aria-label": "Tên truyện để tìm trên MangaDex" });
+    const link = h("input", { type: "text", placeholder: "Hoặc dán link MangaDex của truyện này", "aria-label": "Link MangaDex" });
+    const search = async () => {
+      const text = query.value.trim();
+      if (!text) { toast("Nhập tên truyện để tìm", { bad: true }); return; }
+      const mine = ++searchSeq;
+      searching = true; candidates = null; refreshVolumesPanel();
+      try {
+        const res = await api("/api/search?" + new URLSearchParams({ q: text, lang: "", order: "relevance", adult: "1", offset: "0" }));
+        if (mine === searchSeq) candidates = res.items.slice(0, 8);
+      } catch (err) {
+        if (mine === searchSeq) { candidates = []; toast(err.message, { bad: true }); }
+      } finally {
+        if (mine === searchSeq) { searching = false; refreshVolumesPanel(); }
+      }
+    };
+    const results = searching ? spinner()
+      : candidates === null ? null
+      : candidates.length === 0 ? h("p", { class: "muted small" }, "MangaDex không có truyện nào khớp tên này. Thử tên khác (tên gốc, tên tiếng Anh) hoặc dán link.")
+      : h("div", null, candidates.map((item) => h("div", { class: "row", style: "align-items:center;margin-top:.5rem" },
+          item.CoverURL ? h("img", { src: item.CoverURL, alt: "", style: "width:40px;border-radius:4px", referrerpolicy: "no-referrer" }) : null,
+          h("div", { class: "grow" },
+            h("div", null, item.Title || "(không tên)"),
+            h("div", { class: "muted small" }, [item.Year, item.Status, (item.Authors || []).slice(0, 2).join(", ")].filter(Boolean).join(" · "))),
+          h("button", { class: "btn small", onclick: () => setVolumesFrom(item.ID) }, "Dùng"))));
+    volPanel = h("details", { class: "panel", open: !!volumesFrom || searching || candidates !== null },
+      h("summary", null, "Chia tập theo MangaDex",
+        volumesFrom ? h("span", { class: "chip ok", style: "margin-left:.5rem" }, "đang dùng") : null),
+      h("p", { class: "muted small" }, "Chương và ảnh vẫn lấy từ nguồn của bạn. MangaDex chỉ cho biết chương nào thuộc tập nào, cùng tên truyện, tác giả và bìa. Chương MangaDex không biết sẽ xếp theo các chương bên cạnh."),
+      h("div", { class: "row" },
+        h("label", { class: "field grow" }, h("span", null, "Tìm trên MangaDex theo tên"), query),
+        h("button", { class: "btn", onclick: search }, "Tìm")),
+      h("div", { class: "row", style: "margin-top:.5rem" },
+        h("label", { class: "field grow" }, h("span", null, "Link MangaDex"), link),
+        h("button", { class: "btn", onclick: () => {
+          const dexId = seriesIdFromText(link.value.trim());
+          if (!dexId) { toast("Đó không phải link hoặc ID truyện MangaDex", { bad: true }); return; }
+          setVolumesFrom(dexId);
+        } }, "Dùng link này")),
+      results,
+      volumesFrom ? h("div", { class: "row", style: "margin-top:.75rem" },
+        h("button", { class: "btn danger", onclick: () => setVolumesFrom("") }, "Bỏ chia tập theo MangaDex")) : null);
+    return volPanel;
   }
 
   function fillPanel() {
@@ -468,7 +543,7 @@ async function seriesPage(params) {
         }));
     });
     // A selector source that gives no volume information puts everything in volume 1.
-    const volumeHint = source !== "mangadex" && series.volumes.length === 1 && all.length >= 10
+    const volumeHint = source !== "mangadex" && !volumesFrom && series.volumes.length === 1 && all.length >= 10
       ? h("li", null, `Tất cả ${all.length} chương đang nằm trong một tập vì nguồn này chưa có quy tắc chia tập. Vào tab `,
           h("a", { href: "#/sources" }, "Nguồn"), ", bấm Sửa ở nguồn này rồi điền “Chia tập theo số chương” (ví dụ 1:1-8, 2:9-17), “Regex lấy số tập” hoặc “Số chương mỗi tập”.")
       : null;
@@ -476,15 +551,19 @@ async function seriesPage(params) {
       ? h("div", { class: "notice", style: "margin-top:1rem" },
           h("strong", null, "Cần kiểm tra:"), h("ul", { style: "margin:.4rem 0 0" }, notes.map((n) => h("li", null, n)), volumeHint))
       : null;
-    chaptersBox.replaceChildren(toolbar, noteBox, ...list);
+    chaptersBox.replaceChildren(...nodes(toolbar, noteBox, list));
   }
 
   // The server reports guessed volumes in English; show them in Vietnamese.
   function describeNote(note) {
     const m = /^chapter (\S+) is not on the main source; its volume \((.*)\) is a guess/.exec(note);
-    return m
-      ? `Chương ${m[1]} chỉ có ở nguồn bù; tập ${m[2]} là đoán vì nằm giữa hai tập khác nhau. Kiểm tra lại nếu cần.`
-      : note;
+    if (m) return `Chương ${m[1]} chỉ có ở nguồn bù; tập ${m[2]} là đoán vì nằm giữa hai tập khác nhau. Kiểm tra lại nếu cần.`;
+    const v = /^chapter (\S+) is not in MangaDex's volumes; its volume \((.*)\) is a guess/.exec(note);
+    if (v) return `MangaDex chưa xếp chương ${v[1]} vào tập; tập ${v[2]} là đoán theo các chương bên cạnh. Kiểm tra lại nếu cần.`;
+    if (note.startsWith("MangaDex has no volume information")) {
+      return "MangaDex chưa có thông tin tập cho truyện này nên mọi chương nằm trong “Special”. Thử một truyện MangaDex khác, hoặc chia tập bằng quy tắc ở tab Nguồn.";
+    }
+    return note;
   }
 
   function updateBar() {
@@ -504,6 +583,7 @@ async function seriesPage(params) {
         widepage: options.widepage, dataSaver: source === "mangadex" ? options.dataSaver : "no",
         jpegQuality: options.jpegQuality, lossless: options.lossless, force: options.force,
         fill: fillActive() ? { source: fill.source, url: fill.url } : undefined,
+        volumesFrom: volumesFrom || undefined,
       } });
       toast(`Đã thêm “${series.title}” vào hàng đợi.`, { link: { href: "#/downloads", text: "Xem tiến độ" } });
       pollBadge();

@@ -21,6 +21,7 @@ var (
 	sourceConfigArg     string
 	fillConfigArg       string
 	fillURLArg          string
+	volumesFromArg      string
 	apiURLArg           string
 	coversURLArg        string
 	jpegQualityArg      int
@@ -192,6 +193,7 @@ func init() {
 	rootCmd.Flags().VarP(&widepageArg, "widepage", "w", "split wide pages automatically")
 	rootCmd.Flags().StringVar(&sourceConfigArg, "source-config", "", "JSON file describing a CSS-selector source; <identifier> is then the series page URL")
 	rootCmd.Flags().StringVar(&fillConfigArg, "fill-config", "", "JSON file describing a second website; chapters MangaDex lacks are taken from it (needs --fill-url)")
+	rootCmd.Flags().StringVar(&volumesFromArg, "volumes-from", "", "MangaDex series (ID or link) that decides the volumes and covers of a --source-config series")
 	rootCmd.Flags().StringVar(&fillURLArg, "fill-url", "", "series page on the --fill-config website")
 	rootCmd.PersistentFlags().StringVar(&apiURLArg, "api-url", "", "MangaDex API base URL")
 	rootCmd.PersistentFlags().StringVar(&coversURLArg, "covers-url", "", "MangaDex covers base URL")

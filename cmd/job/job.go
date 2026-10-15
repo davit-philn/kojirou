@@ -51,7 +51,9 @@ func InspectDetailed(ctx context.Context, opts Options, rep Reporter) (*Inspecti
 		for id := range fs.extraIDs {
 			res.Filled[id] = true
 		}
-		res.Notes = fs.Notes()
+	}
+	if n, ok := src.(interface{ Notes() []string }); ok {
+		res.Notes = n.Notes()
 	}
 
 	return res, nil

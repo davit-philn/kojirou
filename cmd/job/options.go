@@ -33,6 +33,11 @@ type Options struct {
 	// stays the main source for volumes and covers. Not combinable with Source.
 	Fill *FillSource
 
+	// VolumesFrom is a MangaDex series ID. With Source set, the chapters
+	// come from the website while MangaDex decides the volumes and supplies
+	// the series' metadata and covers.
+	VolumesFrom string
+
 	Language string
 	Rank     string
 
@@ -82,6 +87,14 @@ func (o Options) validate() error {
 	}
 	if o.Identifier == "" {
 		return errors.New("no series identifier given")
+	}
+	if o.VolumesFrom != "" {
+		if o.Source == nil {
+			return errors.New("taking volumes from MangaDex needs a website as the main source")
+		}
+		if o.Fill != nil {
+			return errors.New("a fill source cannot be combined with volumes from MangaDex")
+		}
 	}
 	if o.Fill != nil {
 		if o.Source != nil {

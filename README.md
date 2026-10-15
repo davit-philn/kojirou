@@ -202,6 +202,19 @@ Detected selectors can be generic on small sites; use **Thử** to check them an
 Pages blocked by `robots.txt`, sites that need JavaScript, logins or browser checks cannot be scanned.
 The same logic is available from Go as `selector.Detect`.
 
+## Volumes from MangaDex for a custom source
+
+When a website has the chapters but no volumes, MangaDex can tell which chapter belongs to which volume.
+On the series page of a custom source open **Chia tập theo MangaDex**, search MangaDex by title (or paste its link) and choose the series.
+Chapters and images still come from the website; MangaDex only supplies the volume of each chapter number, the title, authors and the covers.
+Chapters MangaDex does not know take the volume of their neighbours (guesses are listed under "Cần kiểm tra"), and chapters newer than every volume go into `Special`.
+The choice is remembered in the browser for that series page.
+Nothing is uploaded to MangaDex.
+
+``` shell
+kojirou https://example.org/series/my-series -l vi --source-config source.json --volumes-from https://mangadex.org/title/<id>
+```
+
 ## Custom sources
 
 Besides MangaDex, Kojirou can read chapters from a website described by a JSON file of CSS selectors.

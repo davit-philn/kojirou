@@ -23,7 +23,13 @@ type contentSource interface {
 func newContentSource(opts Options) contentSource {
 	lang := language.Make(opts.Language)
 	if opts.Source != nil {
-		return selectorSource{selector.NewProvider(*opts.Source, lang)}
+		site := selectorSource{selector.NewProvider(*opts.Source, lang)}
+		if opts.VolumesFrom != "" {
+			dex := mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
+			return newVolumeMapSource(site, dex, opts.Identifier, opts.VolumesFrom, lang)
+		}
+
+		return site
 	}
 
 	main := mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}

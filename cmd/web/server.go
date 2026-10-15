@@ -330,6 +330,9 @@ type seriesDTO struct {
 	Volumes     []volumeDTO `json:"volumes"`
 	// Notes lists volume placements that are guesses.
 	Notes []string `json:"notes"`
+	// VolumesFrom is the MangaDex series whose volumes were applied; the
+	// title, description, cover and authors shown then come from MangaDex.
+	VolumesFrom string `json:"volumesFrom,omitempty"`
 }
 
 // resolveSource validates the source and identifier of a request.
@@ -375,6 +378,12 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	volumesFrom, err := s.resolveVolumesFrom(cfg, fill, q.Get("volumesFrom"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 
@@ -388,12 +397,22 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		}
 		dto.Title, dto.Description, dto.CoverURL = summary.Title, summary.Description, summary.CoverURL
 		dto.Authors, dto.Status, dto.Year, dto.Languages = summary.Authors, summary.Status, summary.Year, summary.Languages
+	} else if volumesFrom != "" {
+		summary, err := s.dex.Describe(ctx, volumesFrom)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		dto.Title, dto.Description, dto.CoverURL = summary.Title, summary.Description, summary.CoverURL
+		dto.Authors, dto.Status, dto.Year = summary.Authors, summary.Status, summary.Year
+		dto.VolumesFrom = volumesFrom
 	}
 
 	inspection, err := job.InspectDetailed(ctx, job.Options{
 		Identifier:  id,
 		Source:      cfg,
 		Fill:        fill,
+		VolumesFrom: volumesFrom,
 		Language:    lang,
 		Rank:        "most",
 		Format:      job.FormatCBZ,
@@ -455,6 +474,26 @@ func (s *Server) resolveFill(main *selector.SourceConfig, name, rawURL string) (
 	return &job.FillSource{Config: cfg, URL: rawURL}, nil
 }
 
+// resolveVolumesFrom validates the MangaDex series that decides the volumes
+// of a series from a saved source. Empty means none.
+func (s *Server) resolveVolumesFrom(main *selector.SourceConfig, fill *job.FillSource, raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if main == nil {
+		return "", errors.New("volumes from MangaDex only apply to a series from your own source")
+	}
+	if fill != nil {
+		return "", errors.New("a fill source cannot be combined with volumes from MangaDex")
+	}
+	id, ok := md.ParseSeriesID(raw)
+	if !ok {
+		return "", errors.New("volumes from MangaDex: not a MangaDex series ID or link")
+	}
+
+	return id, nil
+}
+
 type fillRequest struct {
 	Source string `json:"source"`
 	URL    string `json:"url"`
@@ -462,6 +501,7 @@ type fillRequest struct {
 
 type downloadRequest struct {
 	Fill        *fillRequest `json:"fill"`
+	VolumesFrom string       `json:"volumesFrom"`
 	Source      string       `json:"source"`
 	ID          string       `json:"id"`
 	Title       string       `json:"title"`
@@ -535,6 +575,10 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 			return zero, err
 		}
 	}
+	volumesFrom, err := s.resolveVolumesFrom(cfg, fill, req.VolumesFrom)
+	if err != nil {
+		return zero, err
+	}
 	lang := req.Lang
 	if lang == "" {
 		lang = "en"
@@ -579,6 +623,7 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		Identifier:  req.ID,
 		Source:      cfg,
 		Fill:        fill,
+		VolumesFrom: volumesFrom,
 		Language:    lang,
 		Rank:        "most",
 		ChapterIDs:  req.ChapterIDs,

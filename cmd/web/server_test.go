@@ -764,3 +764,74 @@ func TestDetectEndpointExplainsFailures(t *testing.T) {
 		t.Errorf("status %d: %s", rec.Code, rec.Body)
 	}
 }
+
+func TestSeriesWithVolumesFromMangaDex(t *testing.T) {
+	dex := fakeMangaDex(t)
+	e := newEnv(t, func(c *Config) { c.Dex = dex })
+	e.saveSource("demo")
+	page := e.site.URL + "/fillseries" // chapters 5, 3 and 2
+
+	q := url.Values{"source": {"demo"}, "id": {page}, "lang": {"vi"}, "volumesFrom": {"https://mangadex.org/title/" + mdID + "/slug"}}
+	rec := e.do("GET", "/api/series?"+q.Encode(), nil)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	got := decode[seriesDTO](t, rec)
+
+	numbers := map[string]string{}
+	for _, v := range got.Volumes {
+		for _, c := range v.Chapters {
+			numbers[c.Number] = v.ID
+			if c.FromFill {
+				t.Errorf("chapter %s is flagged as filled", c.Number)
+			}
+		}
+	}
+	want := map[string]string{"2": "1", "3": "1", "5": "Special"}
+	for n, v := range want {
+		if numbers[n] != v {
+			t.Errorf("chapter %s in volume %q, want %q", n, numbers[n], v)
+		}
+	}
+	if len(numbers) != 3 {
+		t.Errorf("got chapters %v, want only the website's 2, 3 and 5", numbers)
+	}
+	if got.Title != "Main Title" || got.VolumesFrom != mdID {
+		t.Errorf("title %q volumesFrom %q, want MangaDex's series", got.Title, got.VolumesFrom)
+	}
+	if len(got.Notes) != 1 || !strings.Contains(got.Notes[0], "chapter 3 ") {
+		t.Errorf("notes = %v, want one about chapter 3", got.Notes)
+	}
+
+	for name, query := range map[string]string{
+		"not a series": "source=demo&id=" + url.QueryEscape(page) + "&volumesFrom=nope",
+		"on MangaDex":  "source=mangadex&id=" + mdID + "&volumesFrom=" + mdID,
+		"with fill":    "source=demo&id=" + url.QueryEscape(page) + "&volumesFrom=" + mdID + "&fillSource=demo&fillUrl=" + url.QueryEscape(page),
+	} {
+		if rec := e.do("GET", "/api/series?"+query, nil); rec.Code != 400 {
+			t.Errorf("%s: status %d, want 400 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestDownloadRequestCarriesVolumesFrom(t *testing.T) {
+	got := make(chan job.Options, 1)
+	e := newEnv(t, func(c *Config) {
+		c.Runner = func(ctx context.Context, opts job.Options, rep job.Reporter) (*job.Result, error) {
+			got <- opts
+			return &job.Result{}, nil
+		}
+	})
+	e.saveSource("demo")
+	page := e.site.URL + "/series"
+
+	rec := e.do("POST", "/api/downloads", map[string]any{
+		"source": "demo", "id": page, "chapterIds": []string{"x"}, "volumesFrom": mdID,
+	})
+	if rec.Code != 202 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	if opts := <-got; opts.VolumesFrom != mdID || opts.Source == nil || opts.Identifier != page {
+		t.Errorf("volumes-from not passed to the job: %+v", opts)
+	}
+}
