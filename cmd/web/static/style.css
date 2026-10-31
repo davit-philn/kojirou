@@ -186,3 +186,5 @@ pre.result { background: var(--surface-2); padding: .75rem; border-radius: 8px; 
 .range { display: flex; align-items: center; gap: .4rem; margin-left: auto; flex-wrap: wrap; }
 .series-head .desc { margin-top: .6rem; }
 .series-head .chips { margin-top: .25rem; }
+.volume.drop { outline: 2px dashed var(--accent, #e8590c); outline-offset: -2px; }
+.chapter[draggable="true"] { cursor: grab; }

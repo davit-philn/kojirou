@@ -217,6 +217,13 @@ Nothing is uploaded to MangaDex.
 kojirou https://example.org/series/my-series -l vi --source-config source.json --volumes-from https://mangadex.org/title/<id>
 ```
 
+## Fixing volumes by hand
+
+On any series page, **Chỉnh tập thủ công** lets you change how chapters are split into volumes before downloading:
+split by chapter ranges (`1:1-8, 2:9-17`), split evenly (N chapters per volume from a starting volume), move the ticked chapters to a volume, or drag a chapter onto another volume's heading.
+A volume is a number such as `3` or `3.5`, or `Special`; a new number creates a new volume.
+The moves are remembered in the browser for that series and are sent with the download (`volumeOverrides`); "Khôi phục mặc định" undoes them.
+
 ## Custom sources
 
 Besides MangaDex, Kojirou can read chapters from a website described by a JSON file of CSS selectors.

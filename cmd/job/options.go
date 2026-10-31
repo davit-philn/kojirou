@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/leotaku/kojirou/cmd/formats"
 	"github.com/leotaku/kojirou/cmd/formats/download"
@@ -51,6 +52,10 @@ type Options struct {
 	Chapters string
 	// ChapterIDs restricts the download to these chapter IDs (md.ChapterInfo.ID).
 	ChapterIDs []string
+	// VolumeOverrides moves chapters (by md.ChapterInfo.ID) into the given
+	// volume, a number such as "3" or "3.5", or "Special". It is applied
+	// before any other volume decision of the source is used.
+	VolumeOverrides map[string]string
 
 	DryRun bool
 	Force  bool
@@ -91,6 +96,11 @@ func (o Options) validate() error {
 	}
 	if o.Identifier == "" {
 		return errors.New("no series identifier given")
+	}
+	for id, volume := range o.VolumeOverrides {
+		if _, err := ParseVolume(volume); err != nil {
+			return fmt.Errorf("volume for chapter %q: %w", id, err)
+		}
 	}
 	if o.VolumesFrom != "" {
 		if o.Source == nil {
@@ -149,3 +159,18 @@ type NopReporter struct{}
 
 func (NopReporter) Summary(*md.Manga)          {}
 func (NopReporter) Task(string, bool) Progress { return nopProgress{} }
+
+// ParseVolume reads a volume given by hand: a number such as "3" or "3.5", or
+// "Special" for chapters that belong to no volume.
+func ParseVolume(text string) (md.Identifier, error) {
+	text = strings.TrimSpace(text)
+	if text == "Special" {
+		return unvolumed(), nil
+	}
+	id := md.NewIdentifier(text)
+	if id.IsSpecial() {
+		return id, fmt.Errorf("%q is not a volume number (use a number such as 3 or 3.5, or Special)", text)
+	}
+
+	return id, nil
+}

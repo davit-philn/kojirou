@@ -884,3 +884,37 @@ func TestSeriesWithVolumesFromMangaDexAndWikipedia(t *testing.T) {
 		t.Errorf("info = %v, want where the volumes came from", got.Info)
 	}
 }
+
+func TestDownloadRequestCarriesVolumeOverrides(t *testing.T) {
+	got := make(chan job.Options, 1)
+	e := newEnv(t, func(c *Config) {
+		c.Runner = func(ctx context.Context, opts job.Options, rep job.Reporter) (*job.Result, error) {
+			got <- opts
+			return &job.Result{}, nil
+		}
+	})
+	e.saveSource("demo")
+	page := e.site.URL + "/series"
+	start := func(overrides map[string]string) int {
+		return e.do("POST", "/api/downloads", map[string]any{
+			"source": "demo", "id": page, "chapterIds": []string{"x"}, "volumeOverrides": overrides,
+		}).Code
+	}
+
+	if code := start(map[string]string{"x": "3", "y": "3.5", "z": "Special"}); code != 202 {
+		t.Fatalf("valid overrides: status %d", code)
+	}
+	if opts := <-got; opts.VolumeOverrides["x"] != "3" || opts.VolumeOverrides["z"] != "Special" || len(opts.VolumeOverrides) != 3 {
+		t.Errorf("overrides not passed to the job: %v", opts.VolumeOverrides)
+	}
+	for name, overrides := range map[string]map[string]string{
+		"not a number": {"x": "three"},
+		"empty":        {"x": ""},
+		"too long":     {"x": "12345678901234567"},
+		"negative":     {"x": "-1"},
+	} {
+		if code := start(overrides); code != 400 {
+			t.Errorf("%s: status %d, want 400", name, code)
+		}
+	}
+}

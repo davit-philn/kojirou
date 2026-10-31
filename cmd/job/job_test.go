@@ -231,3 +231,38 @@ func TestSafeDirName(t *testing.T) {
 		}
 	}
 }
+
+func TestVolumeOverridesMoveChaptersByHand(t *testing.T) {
+	srv := newSite(t)
+	opts := siteOptions(srv) // two chapters per volume: 1 and 2 in volume 1, 3 in volume 2
+	volumes := func(opts Options) map[string]string {
+		manga, err := Inspect(context.Background(), opts, NopReporter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for _, c := range manga.Chapters() {
+			got[c.Info.Identifier.String()] = c.Info.VolumeIdentifier.String()
+		}
+
+		return got
+	}
+	if got := volumes(opts); got["1"] != "1" || got["3"] != "2" {
+		t.Fatalf("without overrides: %v", got)
+	}
+
+	opts.VolumeOverrides = map[string]string{
+		srv.URL + "/c/1": "7",
+		srv.URL + "/c/3": "Special",
+		srv.URL + "/c/9": "4", // unknown chapters are ignored
+	}
+	got := volumes(opts)
+	if got["1"] != "7" || got["2"] != "1" || got["3"] != "Special" || len(got) != 3 {
+		t.Errorf("with overrides: %v, want chapter 1 in volume 7, 2 unchanged, 3 in Special", got)
+	}
+
+	opts.VolumeOverrides = map[string]string{srv.URL + "/c/1": "abc"}
+	if _, err := Inspect(context.Background(), opts, NopReporter{}); err == nil {
+		t.Error("a volume that is no number must be rejected")
+	}
+}

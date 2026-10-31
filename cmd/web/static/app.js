@@ -283,6 +283,10 @@ async function seriesPage(params) {
   let searching = false;
   let searchSeq = 0; // a newer search makes an older answer obsolete
   let volPanel = null;
+  let manualOpen = false;
+  // Chapters moved to another volume by hand: chapter id -> volume ("3", "3.5" or "Special").
+  const overrideKey = source + "|" + id;
+  let overrides = store.get("volumeOverrides", {})[overrideKey] || {};
 
   const fillActive = () => source === "mangadex" && fill.source !== "" && fill.url !== "";
 
@@ -485,6 +489,134 @@ async function seriesPage(params) {
           chk("force", "Tải lại cả tập đã có"))));
   }
 
+  const VOLUME_PATTERN = /^(\d{1,4}(\.\d{1,2})?|special)$/i;
+
+  function saveOverrides() {
+    const all = store.get("volumeOverrides", {});
+    if (Object.keys(overrides).length) all[overrideKey] = overrides; else delete all[overrideKey];
+    store.set("volumeOverrides", all);
+  }
+
+  // The chapters of the series grouped by their volume, with the moves made by hand applied.
+  function effectiveVolumes() {
+    const groups = new Map();
+    const order = [];
+    for (const vol of series.volumes) {
+      for (const c of vol.chapters) {
+        const v = overrides[c.id] || vol.id;
+        if (!groups.has(v)) groups.set(v, []);
+        groups.get(v).push({ chapter: c, index: order.length });
+        order.push(c.id);
+      }
+    }
+    const rank = (v) => (v === "Special" ? Infinity : parseFloat(v));
+    return [...groups.entries()]
+      .sort((a, b) => rank(a[0]) - rank(b[0]))
+      .map(([id, items]) => ({
+        id,
+        chapters: items.sort((a, b) => {
+          const x = parseFloat(a.chapter.number), y = parseFloat(b.chapter.number);
+          return isNaN(x) || isNaN(y) || x === y ? a.index - b.index : x - y;
+        }).map((i) => i.chapter),
+      }));
+  }
+
+  function originalVolume(chapterId) {
+    for (const vol of series.volumes) if (vol.chapters.some((c) => c.id === chapterId)) return vol.id;
+    return null;
+  }
+
+  // Moves chapters (by id) into a volume; false if the volume is not valid.
+  function moveChapters(ids, volume) {
+    const text = String(volume).trim();
+    if (!VOLUME_PATTERN.test(text)) {
+      toast("Tập phải là một số (ví dụ 3 hoặc 3.5) hoặc Special", { bad: true });
+      return false;
+    }
+    const target = text.toLowerCase() === "special" ? "Special" : String(parseFloat(text));
+    for (const cid of ids) {
+      if (originalVolume(cid) === target) delete overrides[cid]; else overrides[cid] = target;
+    }
+    saveOverrides();
+    renderChapters();
+    return true;
+  }
+
+  // "1:1-8, 2:9-17": volume, then the first and last chapter number (or one number).
+  function parseVolumeRanges(text) {
+    const rules = [];
+    for (const part of text.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean)) {
+      const m = /^(\S+?)\s*:\s*(\d+(?:\.\d+)?)\s*(?:-\s*(\d+(?:\.\d+)?))?$/.exec(part);
+      if (!m || !VOLUME_PATTERN.test(m[1])) return { error: `Không hiểu “${part}”. Viết kiểu 1:1-8, 2:9-17` };
+      const lo = parseFloat(m[2]), hi = m[3] === undefined ? lo : parseFloat(m[3]);
+      if (hi < lo) return { error: `Khoảng chương “${part}” bị ngược` };
+      rules.push({ volume: m[1].toLowerCase() === "special" ? "Special" : String(parseFloat(m[1])), lo, hi });
+    }
+    return rules.length ? { rules } : { error: "Nhập ít nhất một khoảng, ví dụ 1:1-8, 2:9-17" };
+  }
+
+  function applyRanges(text) {
+    const parsed = parseVolumeRanges(text);
+    if (parsed.error) { toast(parsed.error, { bad: true }); return; }
+    let moved = 0;
+    for (const c of series.volumes.flatMap((v) => v.chapters)) {
+      const n = parseFloat(c.number);
+      const rule = isNaN(n) ? null : parsed.rules.find((r) => n >= r.lo && n <= r.hi);
+      if (!rule) continue;
+      if (originalVolume(c.id) === rule.volume) delete overrides[c.id]; else overrides[c.id] = rule.volume;
+      moved++;
+    }
+    if (!moved) { toast("Không có chương nào nằm trong các khoảng đó", { bad: true }); return; }
+    saveOverrides();
+    renderChapters();
+    toast(`Đã xếp ${moved} chương theo khoảng.`);
+  }
+
+  function applyEvenSplit(perVolume, firstVolume) {
+    const n = parseInt(perVolume, 10), start = parseInt(firstVolume, 10);
+    if (!(n >= 1 && n <= 500) || !(start >= 0 && start <= 9999)) { toast("Nhập số chương mỗi tập (1-500) và tập bắt đầu", { bad: true }); return; }
+    const chapters = series.volumes.flatMap((v) => v.chapters)
+      .filter((c) => !isNaN(parseFloat(c.number)))
+      .sort((a, b) => parseFloat(a.number) - parseFloat(b.number));
+    chapters.forEach((c, i) => {
+      const vol = String(start + Math.floor(i / n));
+      if (originalVolume(c.id) === vol) delete overrides[c.id]; else overrides[c.id] = vol;
+    });
+    saveOverrides();
+    renderChapters();
+    toast(`Đã chia ${chapters.length} chương thành ${Math.ceil(chapters.length / n)} tập.`);
+  }
+
+  function manualPanel(open) {
+    const ranges = h("input", { type: "text", placeholder: "1:1-8, 2:9-17, 3:18-26", "aria-label": "Chia tập theo khoảng chương" });
+    const per = h("input", { type: "number", min: "1", max: "500", value: "9", size: "4", "aria-label": "Số chương mỗi tập" });
+    const start = h("input", { type: "number", min: "0", value: "1", size: "4", "aria-label": "Tập bắt đầu" });
+    const target = h("input", { type: "text", placeholder: "vd: 3", size: "6", "aria-label": "Chuyển các chương đã chọn sang tập" });
+    const count = Object.keys(overrides).length;
+    const panel = h("details", { class: "panel", open: open || count > 0, id: "manual-panel",
+      ontoggle: () => { manualOpen = panel.open; } },
+      h("summary", null, "Chỉnh tập thủ công",
+        count ? h("span", { class: "chip hl", style: "margin-left:.5rem" }, `${count} chương đã chuyển`) : null),
+      h("p", { class: "muted small" }, "Thấy tập chưa hợp lý thì tự sửa ở đây: chia theo khoảng chương, chia đều, chuyển các chương đang chọn, hoặc kéo một chương thả vào tiêu đề của tập khác. Lựa chọn được nhớ cho truyện này và áp dụng khi tải."),
+      h("div", { class: "row" },
+        h("label", { class: "field grow" }, h("span", null, "Chia theo khoảng chương (tập:từ-đến)"), ranges),
+        h("button", { class: "btn", onclick: () => applyRanges(ranges.value) }, "Áp dụng")),
+      h("div", { class: "row", style: "margin-top:.5rem" },
+        h("label", { class: "field" }, h("span", null, "Chia đều: số chương mỗi tập"), per),
+        h("label", { class: "field" }, h("span", null, "bắt đầu từ tập"), start),
+        h("button", { class: "btn", onclick: () => applyEvenSplit(per.value, start.value) }, "Chia đều")),
+      h("div", { class: "row", style: "margin-top:.5rem" },
+        h("label", { class: "field" }, h("span", null, "Chuyển các chương đã chọn sang tập"), target),
+        h("button", { class: "btn", onclick: () => {
+          if (selected.size === 0) { toast("Tick chọn các chương cần chuyển trước", { bad: true }); return; }
+          if (moveChapters([...selected], target.value)) toast("Đã chuyển các chương đã chọn.");
+        } }, "Chuyển"),
+        h("button", { class: "btn danger", disabled: count === 0, onclick: () => {
+          overrides = {}; saveOverrides(); renderChapters(); toast("Đã khôi phục cách chia tập mặc định.");
+        } }, "Khôi phục mặc định")));
+    return panel;
+  }
+
   function renderChapters() {
     if (series.volumes.length === 0) {
       const others = (series.languages || []).filter((l) => l !== lang);
@@ -515,7 +647,7 @@ async function seriesPage(params) {
     const toolbar = h("div", { class: "row", style: "margin-top:1rem" },
       h("button", { class: "btn small", onclick: () => { all.forEach((c) => setChapter(c, true)); refresh(); } }, "Chọn tất cả"),
       h("button", { class: "btn small", onclick: () => { all.forEach((c) => setChapter(c, false)); refresh(); } }, "Bỏ chọn"),
-      h("span", { class: "muted small" }, `${all.length} chương, ${series.volumes.length} tập`,
+      h("span", { class: "muted small" }, `${all.length} chương, ${effectiveVolumes().length} tập`,
         filledCount ? ` (${filledCount} chương lấy từ nguồn bù)` : ""),
       h("span", { class: "range" },
         h("span", { class: "small muted" }, "Chọn khoảng:"), from, "–", to,
@@ -527,20 +659,34 @@ async function seriesPage(params) {
           refresh();
         } }, "Chọn")));
 
-    const list = series.volumes.map((vol) => {
+    const view = effectiveVolumes();
+    const list = view.map((vol) => {
       const volBox = h("input", { type: "checkbox", "aria-label": `Chọn cả tập ${vol.id}`, onclick: (e) => e.stopPropagation(),
         onchange: (e) => { vol.chapters.forEach((c) => setChapter(c, e.target.checked)); refresh(); } });
       volChecks.push({ box: volBox, chapters: vol.chapters });
-      return h("details", { class: "volume", open: true },
+      const section = h("details", { class: "volume", open: true, "data-volume": vol.id,
+        ondragover: (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; section.classList.add("drop"); },
+        ondragleave: (e) => { if (!section.contains(e.relatedTarget)) section.classList.remove("drop"); },
+        ondrop: (e) => {
+          e.preventDefault();
+          section.classList.remove("drop");
+          const dragged = e.dataTransfer.getData("text/plain");
+          if (!dragged) return;
+          const ids = selected.has(dragged) && selected.size > 1 ? [...selected] : [dragged];
+          moveChapters(ids, vol.id);
+        } },
         h("summary", null, volBox, vol.id === "Special" ? "Chưa xếp vào tập (Special)" : `Tập ${vol.id}`, h("span", { class: "muted small" }, ` · ${vol.chapters.length} chương`)),
         vol.chapters.map((c) => {
-          const box = h("input", { type: "checkbox", onchange: (e) => { setChapter(c, e.target.checked); refresh(); } });
+          const box = h("input", { type: "checkbox", checked: selected.has(c.id), onchange: (e) => { setChapter(c, e.target.checked); refresh(); } });
           checks.set(c.id, box);
-          return h("label", { class: "chapter" }, box,
+          return h("label", { class: "chapter", draggable: "true", "data-chapter": c.id,
+            ondragstart: (e) => { e.dataTransfer.setData("text/plain", c.id); e.dataTransfer.effectAllowed = "move"; } }, box,
             h("span", { class: "name" }, `Chương ${c.number}`, c.title && c.title !== c.number ? ` — ${c.title}` : "",
-              c.fromFill ? h("span", { class: "chip hl", style: "margin-left:.5rem" }, "nguồn bù") : null),
+              c.fromFill ? h("span", { class: "chip hl", style: "margin-left:.5rem" }, "nguồn bù") : null,
+              overrides[c.id] ? h("span", { class: "chip", style: "margin-left:.5rem" }, "đã chuyển") : null),
             h("span", { class: "meta" }, [c.groups.join(", "), formatDate(c.published)].filter(Boolean).join(" · ")));
         }));
+      return section;
     });
     // A selector source that gives no volume information puts everything in volume 1.
     const volumeHint = source !== "mangadex" && !volumesFrom && series.volumes.length === 1 && all.length >= 10
@@ -554,7 +700,8 @@ async function seriesPage(params) {
     const infoBox = (series.info || []).length
       ? h("p", { class: "muted small", style: "margin-top:.75rem" }, series.info.map(describeInfo).join(" "))
       : null;
-    chaptersBox.replaceChildren(...nodes(toolbar, infoBox, noteBox, list));
+    chaptersBox.replaceChildren(...nodes(manualPanel(manualOpen), toolbar, infoBox, noteBox, list));
+    refresh();
   }
 
   function describeInfo(info) {
@@ -589,6 +736,13 @@ async function seriesPage(params) {
     bar.replaceChildren(h("strong", null, `Đã chọn ${selected.size} chương`), button);
   }
 
+  // The by-hand moves of the chapters that are about to be downloaded.
+  function chosenOverrides() {
+    const picked = {};
+    for (const cid of selected) if (overrides[cid]) picked[cid] = overrides[cid];
+    return Object.keys(picked).length ? picked : undefined;
+  }
+
   async function startDownload(e) {
     const button = e.currentTarget;
     button.disabled = true;
@@ -600,6 +754,7 @@ async function seriesPage(params) {
         jpegQuality: options.jpegQuality, lossless: options.lossless, force: options.force,
         fill: fillActive() ? { source: fill.source, url: fill.url } : undefined,
         volumesFrom: volumesFrom || undefined,
+        volumeOverrides: chosenOverrides(),
       } });
       toast(`Đã thêm “${series.title}” vào hàng đợi.`, { link: { href: "#/downloads", text: "Xem tiến độ" } });
       pollBadge();

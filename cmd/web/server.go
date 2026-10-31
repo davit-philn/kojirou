@@ -515,14 +515,16 @@ type downloadRequest struct {
 	Title       string       `json:"title"`
 	Lang        string       `json:"lang"`
 	ChapterIDs  []string     `json:"chapterIds"`
-	Format      string       `json:"format"`
-	RightToLeft *bool        `json:"rightToLeft"`
-	Autocrop    bool         `json:"autocrop"`
-	Widepage    string       `json:"widepage"`
-	DataSaver   string       `json:"dataSaver"`
-	JPEGQuality int          `json:"jpegQuality"`
-	Lossless    bool         `json:"lossless"`
-	Force       bool         `json:"force"`
+	// VolumeOverrides maps chapter IDs to a volume chosen by hand.
+	VolumeOverrides map[string]string `json:"volumeOverrides"`
+	Format          string            `json:"format"`
+	RightToLeft     *bool             `json:"rightToLeft"`
+	Autocrop        bool              `json:"autocrop"`
+	Widepage        string            `json:"widepage"`
+	DataSaver       string            `json:"dataSaver"`
+	JPEGQuality     int               `json:"jpegQuality"`
+	Lossless        bool              `json:"lossless"`
+	Force           bool              `json:"force"`
 }
 
 var (
@@ -600,6 +602,17 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 	if len(req.ChapterIDs) > maxChapterIDs {
 		return zero, fmt.Errorf("too many chapters (max %d)", maxChapterIDs)
 	}
+	if len(req.VolumeOverrides) > maxChapterIDs {
+		return zero, fmt.Errorf("too many volume overrides (max %d)", maxChapterIDs)
+	}
+	for id, volume := range req.VolumeOverrides {
+		if len(id) > 2048 {
+			return zero, errors.New("chapter id too long")
+		}
+		if _, err := job.ParseVolume(volume); err != nil || len(volume) > 16 {
+			return zero, fmt.Errorf("invalid volume %q: use a number such as 3 or 3.5, or Special", volume)
+		}
+	}
 	format := job.Format(req.Format)
 	if format == "" {
 		format = job.FormatCBZ
@@ -628,23 +641,24 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 	}
 
 	return job.Options{
-		Identifier:  req.ID,
-		Source:      cfg,
-		Fill:        fill,
-		VolumesFrom: volumesFrom,
-		Wikipedia:   s.cfg.Wikipedia,
-		Language:    lang,
-		Rank:        "most",
-		ChapterIDs:  req.ChapterIDs,
-		Force:       req.Force,
-		Format:      format,
-		Autocrop:    req.Autocrop,
-		Widepage:    widepage,
-		LeftToRight: !rtl,
-		DataSaver:   saver,
-		JPEGQuality: quality,
-		Lossless:    req.Lossless,
-		LibraryDir:  s.cfg.LibraryDir,
+		Identifier:      req.ID,
+		Source:          cfg,
+		Fill:            fill,
+		VolumesFrom:     volumesFrom,
+		Wikipedia:       s.cfg.Wikipedia,
+		Language:        lang,
+		Rank:            "most",
+		ChapterIDs:      req.ChapterIDs,
+		VolumeOverrides: req.VolumeOverrides,
+		Force:           req.Force,
+		Format:          format,
+		Autocrop:        req.Autocrop,
+		Widepage:        widepage,
+		LeftToRight:     !rtl,
+		DataSaver:       saver,
+		JPEGQuality:     quality,
+		Lossless:        req.Lossless,
+		LibraryDir:      s.cfg.LibraryDir,
 	}, nil
 }
 

@@ -204,6 +204,8 @@ func getChapters(
 		return nil, fmt.Errorf("%v: %w", src.Name(), err)
 	}
 
+	applyVolumeOverrides(chapters, opts.VolumeOverrides)
+
 	if opts.Disk != "" {
 		p := rep.Task("Disk...", true)
 		diskChapters, err := disk.LoadChapters(opts.Disk, language.Make(opts.Language), p)
@@ -228,6 +230,23 @@ func getChapters(
 	}
 
 	return filter.RemoveDuplicates(chapters), nil
+}
+
+// applyVolumeOverrides moves the chapters named in overrides into the volumes
+// chosen by hand. The list is changed in place.
+func applyVolumeOverrides(chapters md.ChapterList, overrides map[string]string) {
+	if len(overrides) == 0 {
+		return
+	}
+	for i := range chapters {
+		text, ok := overrides[chapters[i].Info.ID]
+		if !ok {
+			continue
+		}
+		if volume, err := ParseVolume(text); err == nil {
+			chapters[i].Info.VolumeIdentifier = volume
+		}
+	}
 }
 
 func getCovers(
