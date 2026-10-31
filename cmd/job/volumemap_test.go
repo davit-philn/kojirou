@@ -33,7 +33,7 @@ func TestAssignVolumes(t *testing.T) {
 		chap("s6", "6", "1", vi),    // newer than every volume
 	}
 
-	got, notes := assignVolumes(volumes, site, vi)
+	got, notes, last := assignVolumes(volumes, site, vi)
 
 	if len(got) != len(site) {
 		t.Fatalf("got %d chapters, want %d", len(got), len(site))
@@ -43,7 +43,7 @@ func TestAssignVolumes(t *testing.T) {
 			t.Errorf("chapter %d changed identity", i)
 		}
 	}
-	want := map[string]string{"1": "1", "3": "1", "4": "2", "3.5": "1", "4.5": "2", "6": "Special"}
+	want := map[string]string{"1": "1", "3": "1", "4": "2", "3.5": "1", "4.5": "2", "6": "2"}
 	for number, vol := range want {
 		if g := volumeOf(got, number); g != vol {
 			t.Errorf("chapter %v in volume %q, want %q", number, g, vol)
@@ -52,11 +52,14 @@ func TestAssignVolumes(t *testing.T) {
 	if len(notes) != 1 || !strings.Contains(notes[0], "3.5") {
 		t.Errorf("notes = %q, want one guess about chapter 3.5", notes)
 	}
+	if last.Chapters != 1 || last.Volume.String() != "2" {
+		t.Errorf("last = %+v, want chapter 6 moved into volume 2", last)
+	}
 }
 
 func TestAssignVolumesWithoutVolumeInformation(t *testing.T) {
 	vi := language.Vietnamese
-	got, notes := assignVolumes(nil, md.ChapterList{chap("s1", "1", "1", vi), chap("s2", "2", "1", vi)}, vi)
+	got, notes, last := assignVolumes(nil, md.ChapterList{chap("s1", "1", "1", vi), chap("s2", "2", "1", vi)}, vi)
 	for _, c := range got {
 		if v := c.Info.VolumeIdentifier.String(); v != "Special" {
 			t.Errorf("chapter %v in volume %q, want Special", c.Info.Identifier, v)
@@ -64,6 +67,9 @@ func TestAssignVolumesWithoutVolumeInformation(t *testing.T) {
 	}
 	if len(notes) == 0 || !strings.Contains(notes[0], "no volume information") {
 		t.Errorf("notes = %q, want a hint that MangaDex has no volumes", notes)
+	}
+	if last.Chapters != 0 {
+		t.Errorf("last = %+v: with no known volume there is no last volume to use", last)
 	}
 }
 
@@ -76,7 +82,7 @@ func TestAssignVolumesSummarisesManyGuesses(t *testing.T) {
 	for n := 1; n <= 40; n++ {
 		site = append(site, chap(fmt.Sprintf("s%d", n), fmt.Sprint(n), "1", vi))
 	}
-	got, notes := assignVolumes(volumeMap("30", "3", "31", "3", "40", "4"), site, vi)
+	got, notes, _ := assignVolumes(volumeMap("30", "3", "31", "3", "40", "4"), site, vi)
 
 	if v := volumeOf(got, "1"); v != "3" {
 		t.Errorf("chapter 1 in volume %q, want 3", v)
@@ -231,7 +237,7 @@ func TestVolumeMapUsesWikipediaForWhatMangaDexLacks(t *testing.T) {
 	if wiki.asked != "Blue Lock" {
 		t.Errorf("Wikipedia was asked for %q, want MangaDex's title", wiki.asked)
 	}
-	want := map[string]string{"1": "1", "5": "2", "9": "7", "12": "Special"}
+	want := map[string]string{"1": "1", "5": "2", "9": "7", "12": "7"} // 12 is newer than everything: last volume
 	for number, vol := range want {
 		if g := volumeOf(chapters, number); g != vol {
 			t.Errorf("chapter %s in volume %q, want %q (MangaDex first, then Wikipedia)", number, g, vol)
@@ -240,7 +246,9 @@ func TestVolumeMapUsesWikipediaForWhatMangaDexLacks(t *testing.T) {
 	if len(src.Notes()) != 0 {
 		t.Errorf("notes = %q, want none", src.Notes())
 	}
-	if info := src.Info(); len(info) != 1 || !strings.Contains(info[0], "List of Blue Lock chapters") || !strings.Contains(info[0], "Volumes of 6 chapters") {
+	info := strings.Join(src.Info(), "|")
+	if !strings.Contains(info, "List of Blue Lock chapters") || !strings.Contains(info, "Volumes of 6 chapters") ||
+		!strings.Contains(info, "1 chapters are not in any volume yet and were put into the last volume (7)") {
 		t.Errorf("info = %q", info)
 	}
 }

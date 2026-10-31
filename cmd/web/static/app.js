@@ -559,7 +559,9 @@ async function seriesPage(params) {
 
   function describeInfo(info) {
     const m = /^Volumes of (\d+) chapters come from the Wikipedia page "(.*)"; the rest from MangaDex$/.exec(info);
-    return m ? `Số tập của ${m[1]} chương lấy từ trang Wikipedia “${m[2]}”, phần còn lại từ MangaDex.` : info;
+    if (m) return `Số tập của ${m[1]} chương lấy từ trang Wikipedia “${m[2]}”, phần còn lại từ MangaDex.`;
+    const last = /^(\d+) chapters are not in any volume yet and were put into the last volume \((.*)\)$/.exec(info);
+    return last ? `${last[1]} chương chưa thuộc tập nào đã được xếp vào tập cuối (tập ${last[2]}).` : info;
   }
 
   // The server reports guessed volumes in English; show them in Vietnamese.

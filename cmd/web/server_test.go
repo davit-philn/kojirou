@@ -794,7 +794,7 @@ func TestSeriesWithVolumesFromMangaDex(t *testing.T) {
 			}
 		}
 	}
-	want := map[string]string{"2": "1", "3": "1", "5": "Special"}
+	want := map[string]string{"2": "1", "3": "1", "5": "2"} // 5 is newer than every volume: the last one
 	for n, v := range want {
 		if numbers[n] != v {
 			t.Errorf("chapter %s in volume %q, want %q", n, numbers[n], v)

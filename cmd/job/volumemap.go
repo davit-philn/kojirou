@@ -101,7 +101,10 @@ func (s *volumeMapSource) Chapters(ctx context.Context, dexID string) (md.Chapte
 		}
 	}
 
-	chapters, notes := assignVolumes(volumes, siteChapters, s.lang)
+	chapters, notes, lastInfo := assignVolumes(volumes, siteChapters, s.lang)
+	if lastInfo.Chapters > 0 {
+		s.info = append(s.info, fmt.Sprintf("%d chapters are not in any volume yet and were put into the last volume (%v)", lastInfo.Chapters, lastInfo.Volume))
+	}
 	if wikiMessage != "" && len(notes) > 0 {
 		notes = append(notes, wikiMessage)
 	}
@@ -124,15 +127,40 @@ func (s *volumeMapSource) Pages(ctx context.Context, chapters md.ChapterList, p 
 	return s.site.Pages(ctx, chapters, p)
 }
 
+// lastVolumeInfo describes the chapters that were put into the last volume
+// because they come after every known chapter (or are not numbered).
+type lastVolumeInfo struct {
+	Volume   md.Identifier
+	Chapters int
+}
+
 // assignVolumes gives every chapter of site the volume that MangaDex has for
 // the same chapter number. Numbers MangaDex lacks get the volume of their
-// neighbours; the notes name the guesses.
-func assignVolumes(volumes map[md.Identifier]md.Identifier, site md.ChapterList, lang language.Tag) (md.ChapterList, []string) {
+// neighbours; the notes name the guesses. Chapters after the last known one,
+// and chapters without a number, go into the last volume instead of a
+// separate "Special" one, unless no volume is known at all.
+func assignVolumes(volumes map[md.Identifier]md.Identifier, site md.ChapterList, lang language.Tag) (md.ChapterList, []string, lastVolumeInfo) {
 	known := make([]md.ChapterInfo, 0, len(volumes))
 	for chapter, volume := range volumes {
 		known = append(known, md.ChapterInfo{Identifier: chapter, VolumeIdentifier: volume})
 	}
 	sort.SliceStable(known, func(i, j int) bool { return known[i].Identifier.Less(known[j].Identifier) })
+
+	var last md.Identifier
+	for _, volume := range volumes {
+		if last.IsSpecial() || last.Less(volume) {
+			last = volume
+		}
+	}
+	lastInfo := lastVolumeInfo{Volume: last}
+	toLast := func(ch *md.Chapter) {
+		if len(known) == 0 {
+			ch.Info.VolumeIdentifier = unvolumed()
+			return
+		}
+		ch.Info.VolumeIdentifier = last
+		lastInfo.Chapters++
+	}
 
 	notes := make([]string, 0)
 	if len(known) == 0 {
@@ -147,13 +175,15 @@ func assignVolumes(volumes map[md.Identifier]md.Identifier, site md.ChapterList,
 		ch.Info.Language = lang
 		switch volume, ok := volumes[id]; {
 		case id.IsSpecial():
-			ch.Info.VolumeIdentifier = unvolumed()
+			toLast(&ch)
 		case ok:
 			ch.Info.VolumeIdentifier = volume
 		default:
 			volume, certain := inferVolume(known, id)
 			ch.Info.VolumeIdentifier = volume
-			if !certain {
+			if volume.Equal(unvolumed()) {
+				toLast(&ch)
+			} else if !certain {
 				if _, seen := guessedVolume[id]; !seen {
 					guessed = append(guessed, id)
 				}
@@ -182,5 +212,5 @@ func assignVolumes(volumes map[md.Identifier]md.Identifier, site md.ChapterList,
 			len(guessed), guessed[0], guessed[len(guessed)-1], len(volumes), len(distinct)))
 	}
 
-	return result, notes
+	return result, notes, lastInfo
 }
