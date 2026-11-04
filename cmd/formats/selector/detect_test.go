@@ -2,6 +2,7 @@ package selector
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -300,4 +301,119 @@ Disallow: /only-for-us
 	if !parseRobots("", "kojirou").allowed("/anything") || !(*robotsRules)(nil).allowed("/x") {
 		t.Error("no rules means everything is allowed")
 	}
+}
+
+// catalogueHome is a home page with series cards, a search form and a link to
+// the next page of the list.
+func catalogueHome(series int) string {
+	home := cardHome(series, "Chương")
+	extra := `<form action="/tim-kiem" method="get"><input type="text" name="keyword" placeholder="Tìm truyện"><input type="hidden" name="ref" value="home"></form>` +
+		`<div class="pager"><a href="/?page=1">1</a><a href="/?page=2" class="next">Sau »</a></div>`
+
+	return strings.Replace(home, "</body>", extra+"</body>", 1)
+}
+
+func TestDetectFindsTheCatalogueSoTheSourceCanBeBrowsed(t *testing.T) {
+	pages := map[string]string{
+		"/":                         catalogueHome(8),
+		"/truyen-tranh/series-1-11": divChapterList(12, "Chương"),
+		"/truyen-tranh/series-2-12": divChapterList(12, "Chương"),
+		"/truyen-tranh/series-3-13": divChapterList(12, "Chương"),
+	}
+	for i := 1; i <= 12; i++ {
+		pages[fmt.Sprintf("/truyen-tranh/series-1-11-chap-%d", i)] = srcChapterPage
+	}
+	s := newSite(t, pages)
+
+	d, err := detect(t, s.srv.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := d.Config
+	if !cfg.Browsable() || d.SeriesCount != 8 || cfg.ListURL != "" || cfg.NextPageSelector == "" || !cfg.Searchable() {
+		t.Fatalf("catalogue not detected: %+v (series %d)", cfg, d.SeriesCount)
+	}
+	if _, err := ParseConfig(mustJSONConfig(t, cfg)); err != nil {
+		t.Fatalf("the detected configuration is invalid: %v", err)
+	}
+
+	page, err := ListSeries(context.Background(), cfg.DefaultListURL(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 8 {
+		t.Fatalf("got %d series, want 8: %+v", len(page.Items), page.Items)
+	}
+	first := page.Items[0]
+	if first.Title != "Series 1" || first.URL != s.srv.URL+"/truyen-tranh/series-1-11" || first.CoverURL != s.srv.URL+"/t/1.jpg" {
+		t.Errorf("first series = %+v", first)
+	}
+	if page.Next != s.srv.URL+"/?page=2" {
+		t.Errorf("next = %q", page.Next)
+	}
+	address, err := cfg.SearchAddress("one piece & co")
+	if err != nil || !strings.HasPrefix(address, s.srv.URL+"/tim-kiem?") ||
+		!strings.Contains(address, "keyword=one+piece+%26+co") || !strings.Contains(address, "ref=home") {
+		t.Errorf("search address = %q, %v", address, err)
+	}
+
+	if _, err := ListSeries(context.Background(), "http://elsewhere.example/", cfg); err == nil {
+		t.Error("a list page on another website must be refused")
+	}
+}
+
+func TestDetectDoesNotInventACatalogue(t *testing.T) {
+	// A series page was given: nothing to browse.
+	var list strings.Builder
+	list.WriteString(`<html><body><ul class="chapters">`)
+	for i := 8; i >= 1; i-- {
+		fmt.Fprintf(&list, `<li class="row"><a href="/read/title/%d">Chapter %d</a></li>`, i, i)
+	}
+	list.WriteString(`</ul></body></html>`)
+	pages := map[string]string{"/series/a": list.String()}
+	for i := 1; i <= 8; i++ {
+		pages[fmt.Sprintf("/read/title/%d", i)] = `<html><body><div id="r"><img src="/i/1.jpg"><img src="/i/2.jpg"></div></body></html>`
+	}
+	s := newSite(t, pages)
+
+	d, err := detect(t, s.srv.URL+"/series/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Config.Browsable() || d.SeriesCount != 0 || !strings.Contains(strings.Join(d.Notes, " "), "series page") {
+		t.Errorf("config %+v notes %v", d.Config, d.Notes)
+	}
+}
+
+func TestBrowseConfigValidation(t *testing.T) {
+	base := SourceConfig{BaseURL: "https://example.org", ChapterListSelector: "a", ImageListSelector: "img"}
+	for name, mutate := range map[string]func(*SourceConfig){
+		"search without {q}":        func(c *SourceConfig) { c.SeriesSelector = "a"; c.SearchURL = "https://example.org/s?q=" },
+		"search on a bad scheme":    func(c *SourceConfig) { c.SeriesSelector = "a"; c.SearchURL = "ftp://example.org/s?q={q}" },
+		"bad series selector":       func(c *SourceConfig) { c.SeriesSelector = "a[" },
+		"bad next selector":         func(c *SourceConfig) { c.SeriesSelector = "a"; c.NextPageSelector = "(" },
+		"search needs a selector":   func(c *SourceConfig) { c.SearchURL = "https://example.org/s?q={q}" },
+		"list url needs a selector": func(c *SourceConfig) { c.ListURL = "/list" },
+	} {
+		cfg := base
+		mutate(&cfg)
+		if _, err := ParseConfig(mustJSONConfig(t, cfg)); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+	ok := base
+	ok.SeriesSelector, ok.NextPageSelector, ok.SearchURL, ok.ListURL = ".card a", "a.next", "/search?q={q}", "/list"
+	if _, err := ParseConfig(mustJSONConfig(t, ok)); err != nil {
+		t.Errorf("valid browse config rejected: %v", err)
+	}
+}
+
+func mustJSONConfig(t *testing.T, cfg SourceConfig) []byte {
+	t.Helper()
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return data
 }

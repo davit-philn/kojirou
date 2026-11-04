@@ -68,6 +68,7 @@ type Server struct {
 	links   *LinkStore
 	hosts   map[string]bool
 	static  http.Handler
+	covers  *coverSet
 }
 
 func New(ctx context.Context, cfg Config) (*Server, error) {
@@ -98,6 +99,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		links:   NewLinkStore(filepath.Join(cfg.ConfigDir, "links.json")),
 		hosts:   allowedHosts(cfg.Addr),
 		static:  noCache(http.FileServer(http.FS(sub))),
+		covers:  newCoverSet(),
 	}
 
 	return s, nil
@@ -121,6 +123,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/config", s.handleConfig)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("GET /api/series", s.handleSeries)
+	mux.HandleFunc("GET /api/browse", s.handleBrowse)
+	mux.HandleFunc("GET /api/cover", s.handleCover)
 	mux.HandleFunc("GET /api/downloads", s.handleListDownloads)
 	mux.HandleFunc("POST /api/downloads", s.handleStartDownload)
 	mux.HandleFunc("DELETE /api/downloads/{id}", s.handleCancelDownload)
@@ -253,15 +257,21 @@ func decodeBody(r *http.Request, v any) error {
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	names := []string{mangadexSource}
+	// catalogues lists the sources that can be browsed and whether they can be searched.
+	catalogues := map[string]map[string]bool{}
 	if saved, err := s.sources.List(); err == nil {
 		for _, src := range saved {
 			names = append(names, src.Name)
+			if src.Config.Browsable() {
+				catalogues[src.Name] = map[string]bool{"search": src.Config.Searchable()}
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"library": s.cfg.LibraryDir,
-		"version": s.cfg.Version,
-		"sources": names,
+		"library":    s.cfg.LibraryDir,
+		"version":    s.cfg.Version,
+		"sources":    names,
+		"catalogues": catalogues,
 	})
 }
 
@@ -378,6 +388,7 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	withTitle(cfg, q.Get("title"))
 	fill, err := s.resolveFill(cfg, q.Get("fillSource"), q.Get("fillUrl"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -454,6 +465,19 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		dto.Volumes = append(dto.Volumes, v)
 	}
 	writeJSON(w, http.StatusOK, dto)
+}
+
+// withTitle names a series of a custom source after what the catalogue called
+// it, instead of the last part of its address.
+func withTitle(cfg *selector.SourceConfig, title string) {
+	title = strings.TrimSpace(title)
+	if cfg == nil || title == "" {
+		return
+	}
+	if r := []rune(title); len(r) > 200 {
+		title = string(r[:200])
+	}
+	cfg.Title = title
 }
 
 // resolveFill looks up the saved source and validates the page URL for the
@@ -579,6 +603,7 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 	if err != nil {
 		return zero, err
 	}
+	withTitle(cfg, req.Title)
 	var fill *job.FillSource
 	if req.Fill != nil {
 		if fill, err = s.resolveFill(cfg, req.Fill.Source, req.Fill.URL); err != nil {

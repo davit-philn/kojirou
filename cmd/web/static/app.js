@@ -142,7 +142,9 @@ window.addEventListener("hashchange", render);
 // ---------- browse ----------
 
 async function browsePage() {
-  const sources = await api("/api/config").then((c) => c.sources).catch(() => ["mangadex"]);
+  const config = await api("/api/config").catch(() => ({ sources: ["mangadex"], catalogues: {} }));
+  const sources = config.sources;
+  const catalogues = config.catalogues || {};
   const state = Object.assign({ source: "mangadex", lang: "vi", order: "", adult: false }, store.get("browse", {}));
   if (!sources.includes(state.source)) state.source = "mangadex";
   let query = "";
@@ -169,7 +171,73 @@ async function browsePage() {
   function renderBody() {
     if (controller) controller.abort();
     body.replaceChildren();
-    if (state.source === "mangadex") mangadexBody(); else selectorBody();
+    if (state.source === "mangadex") mangadexBody();
+    else if (catalogues[state.source]) catalogueBody(catalogues[state.source]);
+    else selectorBody();
+  }
+
+  // A source whose website was scanned for its list of series: browse and search it like MangaDex.
+  function catalogueBody(info) {
+    const name = state.source;
+    const q = h("input", { type: "search", placeholder: info.search ? "Tìm truyện trên nguồn này" : "Nguồn này không có ô tìm kiếm", disabled: !info.search, "aria-label": "Tìm truyện" });
+    const other = h("input", { type: "url", placeholder: "https://… một trang danh sách khác của website", "aria-label": "Trang danh sách khác" });
+    const grid = h("div", { class: "grid" });
+    const status = h("div");
+    const more = h("p", { class: "more", style: "text-align:center" });
+    const manual = h("input", { type: "url", placeholder: "https://…/ten-truyen", "aria-label": "Địa chỉ trang truyện" });
+
+    body.append(
+      h("form", { class: "row", onsubmit: (e) => { e.preventDefault(); load({ text: q.value.trim() }); } },
+        h("label", { class: "field grow" }, h("span", null, `Nguồn “${name}”`), q),
+        h("button", { class: "btn primary", type: "submit" }, info.search ? "Tìm" : "Tải lại")),
+      h("details", { class: "panel" },
+        h("summary", null, "Mở trang khác hoặc dán địa chỉ một truyện"),
+        h("form", { class: "row", onsubmit: (e) => { e.preventDefault(); if (other.value.trim()) load({ page: other.value.trim() }); } },
+          h("label", { class: "field grow" }, h("span", null, "Xem trang danh sách khác của website"), other),
+          h("button", { class: "btn", type: "submit" }, "Xem")),
+        h("form", { class: "row", style: "margin-top:.5rem", onsubmit: (e) => {
+          e.preventDefault();
+          if (!manual.value.trim()) return;
+          location.hash = "#/series?" + new URLSearchParams({ source: name, id: manual.value.trim(), lang: state.lang });
+        } },
+          h("label", { class: "field grow" }, h("span", null, "Địa chỉ trang truyện"), manual),
+          h("label", { class: "field" }, h("span", null, "Ngôn ngữ"), langSelect(state.lang, (v) => { state.lang = v; store.set("browse", state); })),
+          h("button", { class: "btn", type: "submit" }, "Mở"))),
+      status, grid, more);
+    load({});
+
+    async function load({ page, text, append }) {
+      if (controller) controller.abort();
+      controller = new AbortController();
+      const spin = spinner();
+      if (!append) { grid.replaceChildren(); more.replaceChildren(); status.replaceChildren(spin); } else more.replaceChildren(spin);
+      const p = new URLSearchParams({ source: name });
+      if (text) p.set("q", text); else if (page) p.set("page", page);
+      try {
+        const res = await api("/api/browse?" + p, { signal: controller.signal, timeout: 60000 });
+        status.replaceChildren();
+        more.replaceChildren();
+        if (res.items.length === 0 && !append) status.replaceChildren(h("div", { class: "empty" }, "Không tìm thấy truyện nào."));
+        for (const item of res.items) grid.append(seriesCard(name, item));
+        if (res.next) {
+          more.append(h("button", { class: "btn", onclick: () => load({ page: res.next, append: true }) }, "Tải thêm"));
+        }
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        status.replaceChildren(errorBox(err));
+        more.replaceChildren();
+      }
+    }
+  }
+
+  function seriesCard(source, item) {
+    const p = new URLSearchParams({ source, id: item.url, lang: state.lang });
+    if (item.title) p.set("title", item.title);
+    return h("a", { class: "card", href: "#/series?" + p },
+      item.coverUrl
+        ? h("img", { class: "cover", src: "/api/cover?" + new URLSearchParams({ source, url: item.coverUrl }), alt: "", loading: "lazy" })
+        : h("div", { class: "cover none" }, "Không có bìa"),
+      h("div", { class: "card-body" }, h("div", { class: "card-title" }, item.title || "(không tên)")));
   }
 
   function selectorBody() {
@@ -311,6 +379,7 @@ async function seriesPage(params) {
     selected.clear();
     updateBar();
     const p = new URLSearchParams({ source, id, lang });
+    if (source !== "mangadex" && params.get("title")) p.set("title", params.get("title"));
     if (fillActive()) { p.set("fillSource", fill.source); p.set("fillUrl", fill.url); }
     if (volumesFrom) p.set("volumesFrom", volumesFrom);
     try {
@@ -903,8 +972,10 @@ async function sourcesPage() {
     return h("label", { class: "field" }, h("span", null, label), inputs[key]);
   });
 
+  // Settings the form has no field for (the catalogue ones) are kept when a source is edited.
+  let extraConfig = {};
   function readConfig() {
-    const cfg = {};
+    const cfg = Object.assign({}, extraConfig);
     for (const [key, , type] of SOURCE_FIELDS) {
       const v = inputs[key].value.trim();
       if (v === "") continue;
@@ -913,6 +984,9 @@ async function sourcesPage() {
     return cfg;
   }
   function fillConfig(cfg) {
+    const known = new Set(SOURCE_FIELDS.map(([key]) => key));
+    extraConfig = {};
+    for (const [key, value] of Object.entries(cfg || {})) if (!known.has(key) && value !== "" && value !== 0) extraConfig[key] = value;
     for (const [key] of SOURCE_FIELDS) inputs[key].value = cfg[key] === undefined || cfg[key] === 0 ? "" : String(cfg[key]);
   }
 
@@ -961,7 +1035,13 @@ async function sourcesPage() {
       h("li", null, h("code", null, `chapter_list_selector: ${detection.config.chapter_list_selector}`)),
       h("li", null, h("code", null, `image_list_selector: ${detection.config.image_list_selector}`), " · ", h("code", null, `image_attr: ${detection.config.image_attr}`)),
       detection.notes.map((n) => h("li", { class: "muted" }, n))),
-    h("p", null, "Để dùng: vào ", h("a", { href: "#/" }, "Duyệt truyện"), `, chọn nguồn “${detection.name}” rồi dán địa chỉ một truyện của website.`)) : null;
+    detection.seriesCount
+      ? h("p", null, `Nguồn này duyệt được như MangaDex: tìm thấy ${detection.seriesCount} truyện ở trang vừa quét${detection.config.search_url ? ", có cả ô tìm kiếm" : ""}. `,
+          h("button", { class: "btn primary small", onclick: () => {
+            const st = Object.assign({ lang: "vi", order: "", adult: false }, store.get("browse", {}));
+            st.source = detection.name; store.set("browse", st); location.hash = "#/";
+          } }, "Duyệt truyện của nguồn này"))
+      : h("p", null, "Để dùng: vào ", h("a", { href: "#/" }, "Duyệt truyện"), `, chọn nguồn “${detection.name}” rồi dán địa chỉ một truyện của website.`)) : null;
 
   app.append(
     h("h1", null, "Nguồn"),

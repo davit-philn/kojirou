@@ -37,6 +37,9 @@ func ParseConfig(data []byte) (SourceConfig, error) {
 	if _, err := compile("image_list_selector", cfg.ImageListSelector); err != nil {
 		return SourceConfig{}, err
 	}
+	if err := validateBrowse(cfg); err != nil {
+		return SourceConfig{}, err
+	}
 	if cfg.TimeoutSeconds < 0 {
 		return SourceConfig{}, fmt.Errorf("timeout_seconds must not be negative")
 	}

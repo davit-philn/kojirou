@@ -60,6 +60,18 @@ type SourceConfig struct {
 	// size. If it is zero, chapters that no rule above matched go into the
 	// "Special" volume when a rule is set, and into volume 1 when none is.
 	ChaptersPerVolume int `json:"chapters_per_volume"`
+
+	// The fields below make a source browsable like a catalogue; all are
+	// optional. ListURL is the page that lists series (default: BaseURL),
+	// SeriesSelector selects one element per series on it (the element or its
+	// first descendant <a> carries the link), NextPageSelector selects the link
+	// to the next page of the list, and SearchURL is a search address with {q}
+	// where the search text goes.
+	ListURL          string `json:"list_url"`
+	SeriesSelector   string `json:"series_selector"`
+	NextPageSelector string `json:"next_page_selector"`
+	SearchURL        string `json:"search_url"`
+
 	// MaxConcurrentDownloads bounds parallel image downloads, to stay clear
 	// of rate limits. Defaults to 4, at most 8.
 	MaxConcurrentDownloads int `json:"max_concurrent_downloads"`

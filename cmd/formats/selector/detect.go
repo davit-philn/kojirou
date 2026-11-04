@@ -51,7 +51,10 @@ type Detection struct {
 	ChapterURL   string       `json:"chapterUrl"`
 	ChapterCount int          `json:"chapterCount"`
 	ImageCount   int          `json:"imageCount"`
-	Notes        []string     `json:"notes"`
+	// SeriesCount is how many series the catalogue selector found on the
+	// start page; zero when the source cannot be browsed.
+	SeriesCount int      `json:"seriesCount"`
+	Notes       []string `json:"notes"`
 }
 
 // Detect works out a source configuration for a website, starting from its
@@ -109,6 +112,26 @@ func Detect(ctx context.Context, startURL string, opts DetectOptions) (*Detectio
 		ChapterURL:   chapterURL,
 		ChapterCount: len(list.chapters),
 		ImageCount:   len(images.urls),
+	}
+	if series.String() == startPage.String() {
+		res.Notes = append(res.Notes, "The address was a series page, so the website's catalogue was not scanned. Scan the home page to be able to browse its series.")
+	} else if cat := d.findCatalogue(startPage, startDoc); cat != nil {
+		res.Config.SeriesSelector = cat.selector
+		res.Config.NextPageSelector = cat.next
+		res.Config.SearchURL = cat.search
+		if !isHomePage(start) {
+			res.Config.ListURL = start.String()
+		}
+		res.SeriesCount = len(cat.items)
+		res.Notes = append(res.Notes, fmt.Sprintf("Found %d series on the start page, so the source can be browsed.", len(cat.items)))
+		if cat.next == "" {
+			res.Notes = append(res.Notes, "No link to a next page was found; browse shows this page only (you can open another list page of the website by its address).")
+		}
+		if cat.search == "" {
+			res.Notes = append(res.Notes, "No search form was found, so searching on this source is not available.")
+		}
+	} else {
+		res.Notes = append(res.Notes, "No list of series was found on the start page, so the source cannot be browsed; paste the address of a series to open it.")
 	}
 	if d.mostTitlesHaveVolume(list.chapters) {
 		res.Config.VolumeRegex = volumeTitle.String()
@@ -490,4 +513,198 @@ func (d *detector) mostTitlesHaveVolume(chapters []Chapter) bool {
 	}
 
 	return float64(n) >= volumeShareToSet*float64(len(chapters))
+}
+
+func isHomePage(u *url.URL) bool {
+	return (u.Path == "" || u.Path == "/") && u.RawQuery == ""
+}
+
+type catalogue struct {
+	selector string
+	next     string
+	search   string
+	items    []SeriesItem
+}
+
+// findCatalogue looks for the list of series on a page, the link to its next
+// page and a search form.
+func (d *detector) findCatalogue(page *url.URL, doc *goquery.Document) *catalogue {
+	selector, items, ok := findSeriesCards(page, doc)
+	if !ok {
+		return nil
+	}
+
+	return &catalogue{selector: selector, items: items, next: findNextPage(doc), search: findSearch(page, doc)}
+}
+
+// hasCover reports whether a link, or the card around it, shows an image.
+func hasCover(n *html.Node) bool {
+	for _, node := range []*html.Node{n, n.Parent} {
+		if node == nil {
+			continue
+		}
+		if goquery.NewDocumentFromNode(node).Find("img").Length() > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// findSeriesCards finds the group of links that look like series on a
+// listing page: many different addresses, not chapters, ideally with covers.
+func findSeriesCards(page *url.URL, doc *goquery.Document) (string, []SeriesItem, bool) {
+	type group struct {
+		nodes    []*html.Node
+		urls     map[string]bool
+		covers   int
+		withText int
+	}
+	groups := map[string]*group{}
+	for _, l := range pageLinks(page, doc) {
+		if depth(l.path) < 1 || chapterLike(l.text+" "+l.title, l.path) {
+			continue
+		}
+		segs := strings.Split(strings.Trim(l.path, "/"), "/")
+		key := fmt.Sprint(len(segs)) + "|" + segs[0] + "|" + parentSignature(l.node)
+		g := groups[key]
+		if g == nil {
+			g = &group{urls: map[string]bool{}}
+			groups[key] = g
+		}
+		g.nodes = append(g.nodes, l.node)
+		g.urls[l.url] = true
+		if hasCover(l.node) {
+			g.covers++
+		}
+		if l.text != "" {
+			g.withText++
+		}
+	}
+
+	type scored struct {
+		g     *group
+		score float64
+	}
+	var ranked []scored
+	for _, g := range groups {
+		if len(g.urls) < minChapterLinks {
+			continue
+		}
+		n := float64(len(g.nodes))
+		ranked = append(ranked, scored{g, float64(len(g.urls)) * (0.5 + float64(g.covers)/n) * (1 + 0.1*float64(g.withText)/n)})
+	}
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+
+	// A card often holds two links to the same series (cover and title).
+	// Take the best group that a reliable selector can be built for.
+	for _, r := range ranked {
+		selector, ok := synthesize(doc, r.g.nodes)
+		if !ok {
+			continue
+		}
+		sel, err := cascadia.Compile(selector)
+		if err != nil {
+			continue
+		}
+		if items := seriesFromDoc(page, doc, sel); len(items) >= minChapterLinks {
+			return selector, items, true
+		}
+	}
+
+	return "", nil, false
+}
+
+var nextLabel = regexp.MustCompile(`(?i)^\s*(next|next page|trang sau|trang tiếp|tiếp|tiep|sau|›|»|>|>>|next\s*[›»>]|[›»>]\s*next)\s*$`)
+
+// findNextPage returns a selector for the single link to the next page of a
+// list, or "".
+func findNextPage(doc *goquery.Document) string {
+	for _, candidate := range []string{`a[rel="next"]`, `a.next`, `li.next a`, `a.next-page`, `a.nextpostslink`, `.pagination a.next`, `a[aria-label="Next"]`} {
+		sel, err := cascadia.Compile(candidate)
+		if err != nil {
+			continue
+		}
+		if matches := doc.FindMatcher(sel); matches.Length() == 1 {
+			if _, ok := matches.Attr("href"); ok {
+				return candidate
+			}
+		}
+	}
+
+	var found string
+	doc.Find("a[href]").EachWithBreak(func(_ int, a *goquery.Selection) bool {
+		text := strings.TrimSpace(a.Text())
+		if text == "" {
+			text = a.AttrOr("title", "")
+		}
+		if !nextLabel.MatchString(text) {
+			return true
+		}
+		if selector, ok := synthesize(doc, []*html.Node{a.Nodes[0]}); ok {
+			if sel, err := cascadia.Compile(selector); err == nil && doc.FindMatcher(sel).Length() == 1 {
+				found = selector
+				return false
+			}
+		}
+
+		return true
+	})
+
+	return found
+}
+
+var searchNames = map[string]bool{"q": true, "s": true, "search": true, "keyword": true, "keywords": true, "key": true, "query": true, "term": true, "tukhoa": true, "name": true, "title": true, "tim": true}
+
+// findSearch looks for a GET search form on the page and returns its search
+// address with {q} in place of the search text, or "".
+func findSearch(page *url.URL, doc *goquery.Document) string {
+	var result string
+	doc.Find("form").EachWithBreak(func(_ int, form *goquery.Selection) bool {
+		if m := strings.ToLower(form.AttrOr("method", "get")); m != "get" {
+			return true
+		}
+		actionURL := page
+		if action := strings.TrimSpace(form.AttrOr("action", "")); action != "" {
+			abs, ok := resolve(page, action)
+			if !ok {
+				return true
+			}
+			u, err := url.Parse(abs)
+			if err != nil || u.Host != page.Host {
+				return true
+			}
+			actionURL = u
+		}
+
+		var field string
+		others := url.Values{}
+		form.Find("input").Each(func(_ int, in *goquery.Selection) {
+			name := in.AttrOr("name", "")
+			kind := strings.ToLower(in.AttrOr("type", "text"))
+			switch {
+			case name == "":
+			case kind == "hidden":
+				others.Add(name, in.AttrOr("value", ""))
+			case (kind == "search" || kind == "text") && field == "" && (kind == "search" || searchNames[strings.ToLower(name)]):
+				field = name
+			}
+		})
+		if field == "" {
+			return true
+		}
+
+		u := *actionURL
+		query := others.Encode()
+		if query != "" {
+			query += "&"
+		}
+		u.RawQuery = query + url.QueryEscape(field) + "=" + searchPlaceholder
+		u.Fragment = ""
+		result = u.String()
+
+		return false
+	})
+
+	return result
 }

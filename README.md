@@ -196,6 +196,7 @@ Links are stored in `links.json` next to `sources.json` in the configuration dir
 ## Automatic source detection
 
 In the web interface, **Nguồn → Tự nhận diện từ trang chủ** takes only a website's home page.
+When the page shows a list of series, the source can also be browsed like MangaDex: **Duyệt truyện** then shows a grid of its series with covers, a "load more" button when the page has a next-page link, and a search box when the website has a GET search form. The settings it finds are `series_selector`, `next_page_selector`, `search_url` (with `{q}`) and `list_url`; covers are fetched through the local server with the website's Referer.
 After you confirm that you may use the site's content, Kojirou reads `robots.txt`, opens a few pages of that site (at most 8, same host only, with a pause between requests), finds the chapter list and the page images, builds the selectors itself and saves the result as a source.
 If the titles contain `Tập N` / `Vol N` the volume rule is filled in too; otherwise the notes say how to add one.
 Detected selectors can be generic on small sites; use **Thử** to check them and edit them if needed.

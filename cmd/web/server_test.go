@@ -918,3 +918,112 @@ func TestDownloadRequestCarriesVolumeOverrides(t *testing.T) {
 		}
 	}
 }
+
+// catalogueSite serves a list of series with covers, a next page and a search
+// result page; covers are only served with the right Referer.
+func catalogueSite(t *testing.T) *httptest.Server {
+	t.Helper()
+	cover := new(bytes.Buffer)
+	if err := png.Encode(cover, image.NewGray(image.Rect(0, 0, 4, 4))); err != nil {
+		t.Fatal(err)
+	}
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		card := func(i int) string {
+			return fmt.Sprintf(`<li class="card"><a href="/truyen/series-%d"><img data-original="/covers/%d.png" src="/placeholder.gif"></a><h3>Series %d</h3></li>`, i, i, i)
+		}
+		switch {
+		case r.URL.Path == "/list" && r.URL.Query().Get("page") == "2":
+			_, _ = w.Write([]byte(`<ul class="cards">` + card(4) + card(5) + card(6) + `</ul>`))
+		case r.URL.Path == "/list":
+			_, _ = w.Write([]byte(`<ul class="cards">` + card(1) + card(2) + card(3) + `</ul><a class="next" href="/list?page=2">Next</a>`))
+		case r.URL.Path == "/search" && r.URL.Query().Get("q") == "one piece":
+			_, _ = w.Write([]byte(`<ul class="cards">` + card(7) + card(8) + card(9) + `</ul>`))
+		case strings.HasPrefix(r.URL.Path, "/covers/"):
+			if r.Header.Get("Referer") != srv.URL+"/" {
+				http.Error(w, "hotlinking", http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(cover.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv
+}
+
+func TestBrowseACatalogueSource(t *testing.T) {
+	site := catalogueSite(t)
+	e := newEnv(t, nil)
+	cfg, _ := json.Marshal(map[string]any{
+		"base_url": site.URL, "referer": site.URL + "/", "chapter_list_selector": "a", "image_list_selector": "img",
+		"list_url": "/list", "series_selector": ".card a", "next_page_selector": "a.next", "search_url": "/search?q={q}",
+	})
+	if rec := e.do("POST", "/api/sources", map[string]any{"name": "shop", "config": json.RawMessage(cfg)}); rec.Code != 200 {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body)
+	}
+	e.saveSource("plain") // not browsable
+
+	conf := decode[map[string]any](t, e.do("GET", "/api/config", nil))
+	catalogues, _ := conf["catalogues"].(map[string]any)
+	if _, ok := catalogues["shop"]; !ok || len(catalogues) != 1 {
+		t.Fatalf("catalogues = %v, want only the browsable source", catalogues)
+	}
+
+	first := decode[browseResponse](t, e.do("GET", "/api/browse?source=shop", nil))
+	if len(first.Items) != 3 || first.Items[0].Title != "Series 1" || first.Next != site.URL+"/list?page=2" {
+		t.Fatalf("first page = %+v", first)
+	}
+	if first.Items[0].CoverURL != site.URL+"/covers/1.png" {
+		t.Errorf("cover = %q, want the lazy-loading attribute", first.Items[0].CoverURL)
+	}
+
+	second := decode[browseResponse](t, e.do("GET", "/api/browse?source=shop&page="+url.QueryEscape(first.Next), nil))
+	if len(second.Items) != 3 || second.Items[0].Title != "Series 4" || second.Next != "" {
+		t.Errorf("second page = %+v", second)
+	}
+	found := decode[browseResponse](t, e.do("GET", "/api/browse?source=shop&q=one+piece", nil))
+	if len(found.Items) != 3 || found.Items[0].Title != "Series 7" {
+		t.Errorf("search = %+v", found)
+	}
+
+	// The cover is fetched through the server with the source's Referer.
+	rec := e.do("GET", "/api/cover?source=shop&url="+url.QueryEscape(first.Items[0].CoverURL), nil)
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" || rec.Body.Len() == 0 {
+		t.Errorf("cover: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	// ...but only addresses that a browse result contained.
+	for name, target := range map[string]string{"unknown address": site.URL + "/covers/99.png", "other host": "http://127.0.0.1:1/x.png"} {
+		if rec := e.do("GET", "/api/cover?source=shop&url="+url.QueryEscape(target), nil); rec.Code != 404 {
+			t.Errorf("%s: status %d, want 404", name, rec.Code)
+		}
+	}
+
+	for name, query := range map[string]string{
+		"unknown source":       "source=nope",
+		"not browsable":        "source=plain",
+		"another website":      "source=shop&page=" + url.QueryEscape("http://evil.example/list"),
+		"search text too long": "source=shop&q=" + strings.Repeat("a", 300),
+	} {
+		if rec := e.do("GET", "/api/browse?"+query, nil); rec.Code != 400 {
+			t.Errorf("%s: status %d, want 400 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestSeriesOfACustomSourceIsNamedAfterTheCatalogue(t *testing.T) {
+	e := newEnv(t, nil)
+	e.saveSource("demo")
+	id := url.QueryEscape(e.site.URL + "/series")
+
+	got := decode[seriesDTO](t, e.do("GET", "/api/series?source=demo&id="+id+"&title="+url.QueryEscape("Blue Lock"), nil))
+	if got.Title != "Blue Lock" {
+		t.Errorf("title = %q, want the catalogue's name", got.Title)
+	}
+	if plain := decode[seriesDTO](t, e.do("GET", "/api/series?source=demo&id="+id, nil)); plain.Title != "Fake Series" {
+		t.Errorf("without a title the source's own title is used, got %q", plain.Title)
+	}
+}
