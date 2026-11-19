@@ -417,3 +417,62 @@ func mustJSONConfig(t *testing.T, cfg SourceConfig) []byte {
 
 	return data
 }
+
+// Series at the top level of the site ("/title-1") whose chapters are labelled
+// with bare numbers: neither condition holds for the usual detection.
+func TestDetectTopLevelSeriesWithNumberedChapters(t *testing.T) {
+	var home strings.Builder
+	home.WriteString(`<html><body><div class="menu"><a href="/the-loai">Thể loại</a><a href="/xep-hang">Xếp hạng</a></div><div class="grid">`)
+	for i := 1; i <= 6; i++ {
+		fmt.Fprintf(&home, `<div class="item"><a href="/truyen-%d"><img src="/c/%d.jpg"></a><a href="/truyen-%d">Truyện %d</a></div>`, i, i, i, i)
+	}
+	home.WriteString(`</div></body></html>`)
+	var list strings.Builder
+	list.WriteString(`<html><body><ul class="eps">`)
+	for i := 10; i >= 1; i-- {
+		fmt.Fprintf(&list, `<li><a href="/doc/truyen-1/%d">%d</a></li>`, i, i)
+	}
+	list.WriteString(`</ul></body></html>`)
+	pages := map[string]string{"/": home.String()}
+	for i := 1; i <= 6; i++ {
+		pages[fmt.Sprintf("/truyen-%d", i)] = list.String()
+	}
+	for i := 1; i <= 10; i++ {
+		pages[fmt.Sprintf("/doc/truyen-1/%d", i)] = srcChapterPage
+	}
+	s := newSite(t, pages)
+
+	d, err := detect(t, s.srv.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify(t, d, 10, 4)
+	if !d.Config.Browsable() || d.SeriesCount != 6 {
+		t.Errorf("the top-level series were not found as a catalogue: %+v (series %d)", d.Config, d.SeriesCount)
+	}
+}
+
+func TestDetectFailureNamesThePagesItOpened(t *testing.T) {
+	var home strings.Builder
+	home.WriteString(`<html><head><title>Home</title></head><body><ul class="cards">`)
+	for i := 1; i <= 6; i++ {
+		fmt.Fprintf(&home, `<li><a href="/truyen/s%d"><img src="/c/%d.jpg"></a></li>`, i, i)
+	}
+	home.WriteString(`</ul></body></html>`)
+	pages := map[string]string{"/": home.String()}
+	for i := 1; i <= 6; i++ {
+		// Series pages that add their chapters with JavaScript: no list in the HTML.
+		pages[fmt.Sprintf("/truyen/s%d", i)] = `<html><body><div id="app"></div><a href="/">Home</a></body></html>`
+	}
+	s := newSite(t, pages)
+
+	_, err := detect(t, s.srv.URL+"/")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{"no chapter list was found", "Pages opened to look for chapters", "/truyen/s1 (1 links, 0 look like chapters)", "JavaScript"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}

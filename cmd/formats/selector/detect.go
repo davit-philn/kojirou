@@ -23,7 +23,7 @@ const (
 	detectDelay      = 400 * time.Millisecond
 	maxRobotsBytes   = 512 << 10
 	minChapterLinks  = 3
-	maxSeriesToTry   = 3
+	maxSeriesToTry   = 4
 	volumeShareToSet = 0.5
 )
 
@@ -227,14 +227,16 @@ func (l *chapterList) sample() string {
 // findChapterList looks for a page with a list of chapters: the start page if
 // it looks like a series page, otherwise a few series linked from it.
 func (d *detector) findChapterList(startPage *url.URL, startDoc *goquery.Document) (*url.URL, *goquery.Document, *chapterList, error) {
-	if depth(startPage.Path) >= 2 {
+	// A start page that is not the home page may itself be a series page.
+	var tried []string
+	if !isHomePage(startPage) {
 		if list, ok := d.chapterListOn(startPage, startDoc); ok {
 			return startPage, startDoc, list, nil
 		}
+		tried = append(tried, describePage(startPage, startDoc))
 	}
 
-	candidates := seriesCandidates(startPage, startDoc)
-	for i, link := range candidates {
+	for i, link := range seriesLinks(startPage, startDoc) {
 		if i >= maxSeriesToTry {
 			break
 		}
@@ -243,14 +245,58 @@ func (d *detector) findChapterList(startPage *url.URL, startDoc *goquery.Documen
 			if strings.Contains(err.Error(), "robots.txt") {
 				return nil, nil, nil, err
 			}
+			tried = append(tried, fmt.Sprintf("%v (could not be opened)", link))
 			continue
 		}
 		if list, ok := d.chapterListOn(page, doc); ok {
 			return page, doc, list, nil
 		}
+		tried = append(tried, describePage(page, doc))
 	}
 
-	return nil, nil, nil, fmt.Errorf("no chapter list was found. %v", describeStart(startDoc))
+	message := fmt.Sprintf("no chapter list was found. %v", describeStart(startDoc))
+	if len(tried) > 0 {
+		message += " Pages opened to look for chapters: " + strings.Join(tried, "; ") + "."
+	}
+
+	return nil, nil, nil, errors.New(message)
+}
+
+// describePage says what a page that was searched for chapters contained.
+func describePage(page *url.URL, doc *goquery.Document) string {
+	links := pageLinks(page, doc)
+	n := 0
+	for _, l := range links {
+		if chapterLike(l.text, l.path) {
+			n++
+		}
+	}
+
+	return fmt.Sprintf("%v (%d links, %d look like chapters)", page.Path, len(links), n)
+}
+
+// seriesLinks lists the addresses on a page that probably lead to series, best
+// guesses first: the links of the card list that findSeriesCards recognises,
+// then the other candidates.
+func seriesLinks(page *url.URL, doc *goquery.Document) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(u string) {
+		if !seen[u] && u != page.String() {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	if _, items, ok := findSeriesCards(page, doc); ok {
+		for _, item := range items {
+			add(item.URL)
+		}
+	}
+	for _, u := range seriesCandidates(page, doc) {
+		add(u)
+	}
+
+	return out
 }
 
 func describeStart(doc *goquery.Document) string {
@@ -364,6 +410,10 @@ func (d *detector) chapterListOn(page *url.URL, doc *goquery.Document) (*chapter
 		}
 	}
 	if len(best) < minChapterLinks {
+		// Some sites label chapters with the bare number ("12") and no word.
+		best = numberedLinks(page, doc)
+	}
+	if len(best) < minChapterLinks {
 		return nil, false
 	}
 
@@ -387,7 +437,38 @@ func (d *detector) chapterListOn(page *url.URL, doc *goquery.Document) (*chapter
 	return &chapterList{selector: selector, chapters: chapters}, true
 }
 
-var digits = regexp.MustCompile(`\d+`)
+var (
+	digits       = regexp.MustCompile(`\d+`)
+	bareNumber   = regexp.MustCompile(`^\s*\d+(?:\.\d+)?\s*$`)
+	minNumbered  = 5
+	numberedHref = regexp.MustCompile(`\d`)
+)
+
+// numberedLinks finds the biggest group of links whose text is just a number
+// and whose addresses differ only in numbers: a chapter list without the word
+// "chapter". It needs more links than the usual detection, as bare numbers
+// also appear in page navigation.
+func numberedLinks(page *url.URL, doc *goquery.Document) []link {
+	groups := map[string][]link{}
+	for _, l := range pageLinks(page, doc) {
+		if !bareNumber.MatchString(l.text) || !numberedHref.MatchString(l.path) {
+			continue
+		}
+		key := hrefShape(l.path) + "|" + parentSignature(l.node)
+		groups[key] = append(groups[key], l)
+	}
+	var best []link
+	for _, g := range groups {
+		if len(g) > len(best) {
+			best = g
+		}
+	}
+	if len(best) < minNumbered {
+		return nil
+	}
+
+	return best
+}
 
 // hrefShape replaces numbers in a path so that chapter links of one series
 // ("…-chap-12", "…-chap-13") share a shape.
@@ -566,7 +647,7 @@ func findSeriesCards(page *url.URL, doc *goquery.Document) (string, []SeriesItem
 			continue
 		}
 		segs := strings.Split(strings.Trim(l.path, "/"), "/")
-		key := fmt.Sprint(len(segs)) + "|" + segs[0] + "|" + parentSignature(l.node)
+		key := fmt.Sprint(len(segs)) + "|" + hrefShape(segs[0]) + "|" + parentSignature(l.node)
 		g := groups[key]
 		if g == nil {
 			g = &group{urls: map[string]bool{}}
