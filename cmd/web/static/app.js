@@ -165,8 +165,33 @@ async function browsePage() {
       t.setAttribute("aria-selected", String(active));
     });
   }
-  app.append(h("h1", null, "Duyệt truyện"), tabs, body);
+  app.append(h("h1", null, "Duyệt truyện"), pasteBox(), tabs, body);
   renderBody();
+
+  // Paste the address of a series from MangaDex or from any saved source's website.
+  function pasteBox() {
+    const input = h("input", { type: "url", placeholder: "Dán địa chỉ một truyện (MangaDex hoặc website đã thêm ở tab Nguồn)", "aria-label": "Dán link truyện" });
+    return h("form", { class: "row", style: "margin-bottom:1rem", onsubmit: (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      const dexId = seriesIdFromText(text);
+      if (dexId) { location.hash = "#/series?" + new URLSearchParams({ source: "mangadex", id: dexId, lang: state.lang }); return; }
+      let host;
+      try { host = new URL(text).hostname.toLowerCase().replace(/^www\./, ""); } catch (_) { toast("Đó không phải một địa chỉ web", { bad: true }); return; }
+      const hosts = config.hosts || {};
+      const names = Object.keys(hosts).filter((n) => hosts[n] === host || host.endsWith("." + hosts[n]));
+      if (names.length === 0) {
+        toast(`Chưa có nguồn nào cho website ${host}. Vào tab Nguồn, dán trang chủ của website đó và bấm Quét và lưu nguồn.`, { bad: true });
+        return;
+      }
+      // Prefer the source the user is looking at when several share the website.
+      const name = names.includes(state.source) ? state.source : names[0];
+      location.hash = "#/series?" + new URLSearchParams({ source: name, id: text, lang: state.lang });
+    } },
+      h("label", { class: "field grow" }, h("span", null, "Dán link truyện để mở thẳng"), input),
+      h("button", { class: "btn primary", type: "submit" }, "Mở"));
+  }
 
   function renderBody() {
     if (controller) controller.abort();

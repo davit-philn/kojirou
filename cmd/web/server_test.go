@@ -973,6 +973,10 @@ func TestBrowseACatalogueSource(t *testing.T) {
 		t.Fatalf("catalogues = %v, want only the browsable source", catalogues)
 	}
 
+	if hosts, _ := conf["hosts"].(map[string]any); hosts["shop"] != "127.0.0.1" || hosts["plain"] != "127.0.0.1" {
+		t.Errorf("hosts = %v, want each source's website so that a pasted link finds its source", hosts)
+	}
+
 	first := decode[browseResponse](t, e.do("GET", "/api/browse?source=shop", nil))
 	if len(first.Items) != 3 || first.Items[0].Title != "Series 1" || first.Next != site.URL+"/list?page=2" {
 		t.Fatalf("first page = %+v", first)

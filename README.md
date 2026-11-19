@@ -225,6 +225,10 @@ split by chapter ranges (`1:1-8, 2:9-17`), split evenly (N chapters per volume f
 A volume is a number such as `3` or `3.5`, or `Special`; a new number creates a new volume.
 The moves are remembered in the browser for that series and are sent with the download (`volumeOverrides`); "Khôi phục mặc định" undoes them.
 
+## Opening a series by its address
+
+At the top of **Duyệt truyện** a box takes the address of a series: a MangaDex link opens it from MangaDex, and a link on the website of any saved source opens it with that source. For a website without a source it says so and points to the Nguồn tab.
+
 ## Custom sources
 
 Besides MangaDex, Kojirou can read chapters from a website described by a JSON file of CSS selectors.

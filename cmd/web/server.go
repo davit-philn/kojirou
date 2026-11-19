@@ -259,9 +259,14 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	names := []string{mangadexSource}
 	// catalogues lists the sources that can be browsed and whether they can be searched.
 	catalogues := map[string]map[string]bool{}
+	// hosts maps each source to its website, so that a pasted link finds its source.
+	hosts := map[string]string{}
 	if saved, err := s.sources.List(); err == nil {
 		for _, src := range saved {
 			names = append(names, src.Name)
+			if u, err := url.Parse(src.Config.BaseURL); err == nil && u.Hostname() != "" {
+				hosts[src.Name] = strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+			}
 			if src.Config.Browsable() {
 				catalogues[src.Name] = map[string]bool{"search": src.Config.Searchable()}
 			}
@@ -272,6 +277,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"version":    s.cfg.Version,
 		"sources":    names,
 		"catalogues": catalogues,
+		"hosts":      hosts,
 	})
 }
 
