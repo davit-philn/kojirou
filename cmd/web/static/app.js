@@ -1016,16 +1016,24 @@ async function libraryPage() {
     app.append(h("div", { class: "empty" }, "Thư viện đang trống. Các tập đã tải sẽ hiện ở đây."));
     return;
   }
+  const coverUrl = (series, file) => `/api/library/${encodeURIComponent(series)}/${encodeURIComponent(file)}/cover`;
+  const thumb = (series, f, cls) => f.format === "cbz"
+    ? h("img", { class: cls, src: coverUrl(series, f.name), alt: "", loading: "lazy",
+        onerror: (e) => { e.target.replaceWith(h("div", { class: cls + " none" }, "Không có bìa")); } })
+    : h("div", { class: cls + " none" }, f.format.toUpperCase());
   for (const series of lib) {
-    app.append(h("section", { class: "series-block" },
-      h("h2", null, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập)`)),
-      series.files.map((f) => h("div", { class: "file" },
-        h("span", { class: "name" }, f.name),
-        h("span", { class: "chip" }, f.format.toUpperCase()),
-        h("span", { class: "muted small" }, formatSize(f.size)),
-        h("span", { class: "muted small" }, formatDate(f.modified)),
-        h("a", { class: "btn small primary", download: "",
-          href: `/api/library/${encodeURIComponent(series.name)}/${encodeURIComponent(f.name)}` }, "Tải về")))));
+    app.append(h("section", { class: "series-block lib-series" },
+      thumb(series.name, series.files[0], "lib-cover"),
+      h("div", { class: "lib-body" },
+        h("h2", null, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập)`)),
+        series.files.map((f) => h("div", { class: "file" },
+          thumb(series.name, f, "lib-thumb"),
+          h("span", { class: "name" }, f.name),
+          h("span", { class: "chip" }, f.format.toUpperCase()),
+          h("span", { class: "muted small" }, formatSize(f.size)),
+          h("span", { class: "muted small" }, formatDate(f.modified)),
+          h("a", { class: "btn small primary", download: "",
+            href: `/api/library/${encodeURIComponent(series.name)}/${encodeURIComponent(f.name)}` }, "Tải về"))))));
   }
 }
 

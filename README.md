@@ -152,7 +152,7 @@ kojirou serve --library D:\Manga --addr 127.0.0.1:9000
 + **Duyệt truyện** :: Browse popular or latest series on MangaDex, search by title and filter by translation language
 + **Chapter picker** :: Open a series, tick whole volumes or single chapters (or a range) and choose the format and image options
 + **Đang tải** :: Watch queued downloads, with progress per volume, and cancel them
-+ **Thư viện** :: Download finished volumes from the library folder again through the browser
++ **Thư viện** :: Shows each series with its cover and a thumbnail per volume (the picture `ComicInfo.xml` marks as the front cover, else the first one of the CBZ), and downloads finished volumes again through the browser
 + **Nguồn** :: Add websites described by CSS selectors (see below), test the selectors on a real page, then browse them like MangaDex
 + **Fill from another site** :: On a MangaDex series page, pick a saved source and the series page on that site to fill the chapters MangaDex lacks (see below); the link is remembered for next time
 

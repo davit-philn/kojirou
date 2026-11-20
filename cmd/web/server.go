@@ -69,6 +69,7 @@ type Server struct {
 	hosts   map[string]bool
 	static  http.Handler
 	covers  *coverSet
+	thumbs  *thumbCache
 }
 
 func New(ctx context.Context, cfg Config) (*Server, error) {
@@ -100,6 +101,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		hosts:   allowedHosts(cfg.Addr),
 		static:  noCache(http.FileServer(http.FS(sub))),
 		covers:  newCoverSet(),
+		thumbs:  newThumbCache(),
 	}
 
 	return s, nil
@@ -131,6 +133,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/downloads/{id}", s.handleCancelDownload)
 	mux.HandleFunc("GET /api/library", s.handleLibrary)
 	mux.HandleFunc("GET /api/library/{series}/{file}", s.handleLibraryFile)
+	mux.HandleFunc("GET /api/library/{series}/{file}/cover", s.handleLibraryCover)
 	mux.HandleFunc("GET /api/sources", s.handleListSources)
 	mux.HandleFunc("POST /api/sources", s.handleSaveSource)
 	mux.HandleFunc("DELETE /api/sources/{name}", s.handleDeleteSource)

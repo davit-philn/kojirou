@@ -1,11 +1,13 @@
 package web
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"log"
@@ -1112,6 +1114,76 @@ func TestCoverPagePreviewAndDownloadRequest(t *testing.T) {
 	for _, bad := range []string{"ftp://x/y", "javascript:alert(1)", "/relative"} {
 		if code := start(bad); code != 400 {
 			t.Errorf("cover page %q: status %d, want 400", bad, code)
+		}
+	}
+}
+
+// writeComic makes a CBZ whose picture 00001 is marked as the front cover in
+// ComicInfo.xml and whose first picture is something else (an advertisement).
+func writeComic(t *testing.T, path string, coverIndex int) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close() //nolint:errcheck
+	zw := zip.NewWriter(f)
+	for i := 0; i < 3; i++ {
+		w, err := zw.Create(fmt.Sprintf("%05d.png", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Every picture has its own size so that the test can tell them apart.
+		if err := png.Encode(w, image.NewGray(image.Rect(0, 0, 600+i*100, 900+i*100))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, _ := zw.Create("ComicInfo.xml")
+	fmt.Fprintf(w, `<ComicInfo><Pages><Page Image="0"/><Page Image="%d" Type="FrontCover"/></Pages></ComicInfo>`, coverIndex)
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLibraryCoverThumbnails(t *testing.T) {
+	e := newEnv(t, nil)
+	if err := os.MkdirAll(filepath.Join(e.library, "Series"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeComic(t, filepath.Join(e.library, "Series", "0001.cbz"), 1)
+	if err := os.WriteFile(filepath.Join(e.library, "Series", "0002.azw3"), []byte("mobi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.library, "Series", "0003.cbz"), []byte("not a zip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do("GET", "/api/library/Series/0001.cbz/cover", nil)
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("cover: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	img, err := jpeg.Decode(rec.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The marked cover is picture 1 (700x1000, shrunk to 240 wide), not the first one (600x900).
+	if b := img.Bounds(); b.Dx() != 240 || b.Dy() != 1000*240/700 {
+		t.Errorf("thumbnail is %v, want 240x%d (the picture ComicInfo.xml marks as the cover)", b, 1000*240/700)
+	}
+
+	// Cached the second time, and only the library's own CBZ files are served.
+	if again := e.do("GET", "/api/library/Series/0001.cbz/cover", nil); again.Code != 200 {
+		t.Errorf("second request: %d", again.Code)
+	}
+	for name, path := range map[string]string{
+		"a mobi book":       "/api/library/Series/0002.azw3/cover",
+		"a broken archive":  "/api/library/Series/0003.cbz/cover",
+		"a missing file":    "/api/library/Series/9999.cbz/cover",
+		"traversal":         "/api/library/..%2F/0001.cbz/cover",
+		"traversal in file": "/api/library/Series/..%2F0001.cbz/cover",
+	} {
+		if rec := e.do("GET", path, nil); rec.Code != 404 {
+			t.Errorf("%s: status %d, want 404", name, rec.Code)
 		}
 	}
 }

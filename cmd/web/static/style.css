@@ -188,3 +188,10 @@ pre.result { background: var(--surface-2); padding: .75rem; border-radius: 8px; 
 .series-head .chips { margin-top: .25rem; }
 .volume.drop { outline: 2px dashed var(--accent, #e8590c); outline-offset: -2px; }
 .chapter[draggable="true"] { cursor: grab; }
+
+.lib-series { display: flex; gap: 1rem; align-items: flex-start; margin: 1.25rem 0; }
+.lib-body { flex: 1; min-width: 0; }
+.lib-cover { width: 120px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 8px; background: var(--surface-2); flex: none; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.lib-thumb { height: 48px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; background: var(--surface-2); flex: none; }
+.lib-cover.none, .lib-thumb.none { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .65rem; text-align: center; }
+@media (max-width: 560px) { .lib-cover { width: 72px; } }
