@@ -82,6 +82,9 @@ func Detect(ctx context.Context, startURL string, opts DetectOptions) (*Detectio
 	if err != nil {
 		return nil, err
 	}
+	// The site may have redirected (example.org to www.example.org, say);
+	// its pages are then the ones on the host it ended up on.
+	d.host = startPage.Host
 
 	series, doc, list, err := d.findChapterList(startPage, startDoc)
 	if err != nil {
@@ -97,7 +100,7 @@ func Detect(ctx context.Context, startURL string, opts DetectOptions) (*Detectio
 		return nil, err
 	}
 
-	origin := (&url.URL{Scheme: start.Scheme, Host: start.Host}).String()
+	origin := (&url.URL{Scheme: startPage.Scheme, Host: startPage.Host}).String()
 	cfg := SourceConfig{
 		BaseURL:                origin,
 		Referer:                origin + "/",
@@ -192,7 +195,7 @@ func (d *detector) loadRobots(start *url.URL) *robotsRules {
 // get fetches a page on the same site, within the page budget and robots.txt.
 func (d *detector) get(rawURL string) (*url.URL, *goquery.Document, error) {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Host != d.host {
+	if err != nil || !sameHost(u.Host, d.host) {
 		return nil, nil, fmt.Errorf("refusing to open %q: only pages of the same website are scanned", rawURL)
 	}
 	if !d.robots.allowed(u.RequestURI()) {
@@ -245,7 +248,12 @@ func (d *detector) findChapterList(startPage *url.URL, startDoc *goquery.Documen
 			if strings.Contains(err.Error(), "robots.txt") {
 				return nil, nil, nil, err
 			}
-			tried = append(tried, fmt.Sprintf("%v (could not be opened)", link))
+			if ctxErr := d.ctx.Err(); ctxErr != nil {
+				return nil, nil, nil, ctxErr
+			}
+			// Say why: a 403 or a timeout looks very different from a page
+			// without a chapter list, and the host stays out of the message.
+			tried = append(tried, fmt.Sprintf("%v (could not be opened: %v)", pathOf(link), strings.ReplaceAll(err.Error(), d.host, "<site>")))
 			continue
 		}
 		if list, ok := d.chapterListOn(page, doc); ok {
@@ -260,6 +268,20 @@ func (d *detector) findChapterList(startPage *url.URL, startDoc *goquery.Documen
 	}
 
 	return nil, nil, nil, errors.New(message)
+}
+
+// sameHost compares two hosts, treating "www.example.org" and "example.org"
+// as one website.
+func sameHost(a, b string) bool {
+	return strings.TrimPrefix(strings.ToLower(a), "www.") == strings.TrimPrefix(strings.ToLower(b), "www.")
+}
+
+func pathOf(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		return u.RequestURI()
+	}
+
+	return rawURL
 }
 
 // describePage says what a page that was searched for chapters contained.
@@ -335,7 +357,7 @@ func pageLinks(page *url.URL, doc *goquery.Document) []link {
 			return
 		}
 		u, err := url.Parse(abs)
-		if err != nil || u.Host != page.Host || (u.Path == page.Path && u.RawQuery == page.RawQuery) {
+		if err != nil || !sameHost(u.Host, page.Host) || (u.Path == page.Path && u.RawQuery == page.RawQuery) {
 			return
 		}
 		out = append(out, link{node: s.Nodes[0], url: abs, path: u.Path, text: strings.TrimSpace(s.Text()), title: s.AttrOr("title", "")})
@@ -752,7 +774,7 @@ func findSearch(page *url.URL, doc *goquery.Document) string {
 				return true
 			}
 			u, err := url.Parse(abs)
-			if err != nil || u.Host != page.Host {
+			if err != nil || !sameHost(u.Host, page.Host) {
 				return true
 			}
 			actionURL = u

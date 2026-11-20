@@ -476,3 +476,80 @@ func TestDetectFailureNamesThePagesItOpened(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectFailureSaysWhyASeriesPageCouldNotBeOpened(t *testing.T) {
+	var home strings.Builder
+	home.WriteString(`<html><head><title>Home</title></head><body><ul class="cards">`)
+	for i := 1; i <= 6; i++ {
+		fmt.Fprintf(&home, `<li><a href="/truyen/s%d"><img src="/c/%d.jpg"></a></li>`, i, i)
+	}
+	home.WriteString(`</ul></body></html>`)
+	// Series pages answer 403, as a site that blocks unknown clients does.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.Error(w, "blocked", http.StatusForbidden)
+			return
+		}
+		_, _ = w.Write([]byte(home.String()))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	_, err := detect(t, srv.URL+"/")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	host := strings.TrimPrefix(srv.URL, "http://")
+	if !strings.Contains(err.Error(), "/truyen/s1 (could not be opened:") || !strings.Contains(err.Error(), "403") {
+		t.Errorf("error %q does not say that the series page answered 403", err)
+	}
+	if strings.Contains(err.Error(), host) {
+		t.Errorf("error %q leaks the host %q", err, host)
+	}
+}
+
+// Many sites redirect to another host name (example.org to www.example.org).
+// The pages are then on the new host, and links on it must still be followed.
+func TestDetectFollowsARedirectToAnotherHostName(t *testing.T) {
+	pages := map[string]string{
+		"/":                         cardHome(6, "Chương"),
+		"/truyen-tranh/series-1-11": divChapterList(12, "Chương"),
+		"/truyen-tranh/series-2-12": divChapterList(12, "Chương"),
+		"/truyen-tranh/series-3-13": divChapterList(12, "Chương"),
+	}
+	for i := 1; i <= 12; i++ {
+		pages[fmt.Sprintf("/truyen-tranh/series-1-11-chap-%d", i)] = srcChapterPage
+	}
+	real := newSite(t, pages)
+	// A second server on another port stands for the other host name.
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, real.srv.URL+r.URL.RequestURI(), http.StatusMovedPermanently)
+	}))
+	t.Cleanup(redirector.Close)
+
+	d, err := detect(t, redirector.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Config.BaseURL != real.srv.URL {
+		t.Errorf("base_url = %q, want the host the site redirected to (%q)", d.Config.BaseURL, real.srv.URL)
+	}
+	verify(t, d, 12, 4)
+}
+
+func TestSameHostIgnoresWww(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"example.org", "www.example.org", true},
+		{"WWW.Example.org", "example.org", true},
+		{"example.org", "cdn.example.org", false},
+		{"example.org:8080", "example.org", false},
+	} {
+		if got := sameHost(c.a, c.b); got != c.want {
+			t.Errorf("sameHost(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
