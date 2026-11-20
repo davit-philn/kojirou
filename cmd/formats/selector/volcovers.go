@@ -81,6 +81,11 @@ func FindVolumeCovers(ctx context.Context, pageURL string, client *http.Client) 
 			return nil, errors.New("the page looks like a browser check (anti-bot) page, which this tool cannot pass")
 		}
 
+		if hidden := doc.Find("img").Length(); hidden > 0 && len(volumeLinks(page, doc)) > 1 {
+			return nil, errors.New("every volume on this page shows the same picture, which is a placeholder rather than the covers " +
+				"(some shops hide the covers of adult titles unless you are signed in with your age confirmed); this tool does not sign in")
+		}
+
 		return nil, fmt.Errorf("no volume covers were found on this page (%d links, %d images). "+
 			"The page must be a series page that lists the volumes with their covers in its HTML (for BookWalker: .../series/<id>/<title>); "+
 			"the page of a single volume does not list them, and pages that add them with JavaScript cannot be read",
@@ -88,6 +93,23 @@ func FindVolumeCovers(ctx context.Context, pageURL string, client *http.Client) 
 	}
 
 	return covers, nil
+}
+
+// volumeLinks lists the distinct addresses on a page that name a volume.
+func volumeLinks(page *url.URL, doc *goquery.Document) map[string]bool {
+	links := map[string]bool{}
+	doc.Find("a[href]").Each(func(_ int, a *goquery.Selection) {
+		if abs, ok := resolve(page, a.AttrOr("href", "")); ok {
+			if u, err := url.Parse(abs); err == nil {
+				last := u.Path[strings.LastIndex(u.Path, "/")+1:]
+				if volumeInPath.MatchString(last) || volumeSection.MatchString(u.Path) {
+					links[u.Path] = true
+				}
+			}
+		}
+	})
+
+	return links
 }
 
 // seriesLinkOf returns the address of the series page a volume page links to
@@ -160,9 +182,17 @@ func volumeCoversFromDoc(page *url.URL, doc *goquery.Document) []VolumeCover {
 		byVolume[number] = &found{volume: value, text: number, cover: cover}
 	})
 
+	// One picture for several volumes is a placeholder (a shop hides the
+	// covers of adult titles behind a "MATURE" picture, say), not a cover.
+	uses := map[string]int{}
+	for _, f := range byVolume {
+		uses[f.cover]++
+	}
 	list := make([]*found, 0, len(byVolume))
 	for _, f := range byVolume {
-		list = append(list, f)
+		if uses[f.cover] == 1 {
+			list = append(list, f)
+		}
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].volume < list[j].volume })
 	result := make([]VolumeCover, 0, len(list))

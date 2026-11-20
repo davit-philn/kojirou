@@ -132,3 +132,35 @@ func TestVolumeCoversOfAOneVolumeSeriesAndFromAVolumePage(t *testing.T) {
 		}
 	}
 }
+
+// A shop that hides the covers of adult titles shows one placeholder picture
+// for every volume; that is not a cover and must not be used as one.
+func TestVolumeCoversIgnoreAPlaceholderSharedByAllVolumes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b strings.Builder
+		for i := 1; i <= 5; i++ {
+			fmt.Fprintf(&b, `<div><a href="/volume/V%d/title-vol-%d"><img src="/static/mature.png"></a></div>`, i, i)
+		}
+		// ...except volume 6, which has its own picture.
+		b.WriteString(`<div><a href="/volume/V6/title-vol-6"><img src="/c/6.jpg"></a></div>`)
+		_, _ = w.Write([]byte(b.String()))
+	}))
+	t.Cleanup(srv.Close)
+
+	covers, err := FindVolumeCovers(context.Background(), srv.URL+"/series/x", nil)
+	if err != nil || len(covers) != 1 || covers[0].Volume != "6" {
+		t.Errorf("covers = %+v, %v; want only volume 6, whose picture is its own", covers, err)
+	}
+
+	all := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b strings.Builder
+		for i := 1; i <= 3; i++ {
+			fmt.Fprintf(&b, `<div><a href="/volume/V%d/title-vol-%d"><img src="/static/mature.png"></a></div>`, i, i)
+		}
+		_, _ = w.Write([]byte(b.String()))
+	}))
+	t.Cleanup(all.Close)
+	if _, err := FindVolumeCovers(context.Background(), all.URL+"/series/x", nil); err == nil || !strings.Contains(err.Error(), "placeholder") {
+		t.Errorf("err = %v, want an explanation that the covers are hidden", err)
+	}
+}
