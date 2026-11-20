@@ -79,6 +79,8 @@ func (p *WidepagePolicyArg) String() string {
 		return "preserve-and-split"
 	case kindle.WidepagePolicySplitAndPreserve:
 		return "split-and-preserve"
+	case kindle.WidepagePolicyRotate:
+		return "rotate"
 	default:
 		panic("unreachable")
 	}
@@ -94,8 +96,10 @@ func (p *WidepagePolicyArg) Set(v string) error {
 		*p = WidepagePolicyArg(kindle.WidepagePolicyPreserveAndSplit)
 	case "split-and-preserve":
 		*p = WidepagePolicyArg(kindle.WidepagePolicySplitAndPreserve)
+	case "rotate":
+		*p = WidepagePolicyArg(kindle.WidepagePolicyRotate)
 	default:
-		return fmt.Errorf(`must be one of: "preserve", "split", or "both"`)
+		return fmt.Errorf(`must be one of: "preserve", "split", "preserve-and-split", "split-and-preserve" or "rotate"`)
 	}
 
 	return nil

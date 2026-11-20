@@ -218,6 +218,20 @@ Nothing is uploaded to MangaDex.
 kojirou https://example.org/series/my-series -l vi --source-config source.json --volumes-from https://mangadex.org/title/<id>
 ```
 
+## Fitting pages to an e-reader (Kindle Paperwhite and others)
+
+A reader's screen has its own shape (a Paperwhite 3 shows 1072×1448 pixels), and pages of other shapes end up with bars or cut off.
+Choose a **Thiết bị đọc** in the download options (or `--device kindle-pw3`, `kindle-pw4`, `kindle-pw5`, `kindle-oasis`, `kindle-basic`, `kobo-clara`) and every page, and the cover, is brought to the screen's exact size, so the reader does not scale or cut anything:
++ `smart` (default, `--fit-mode smart`): a page whose shape is within 8% of the screen's is stretched slightly to fill it; any other page is fitted whole and padded
++ `fit`: the whole page is kept and padded
++ `cover`: the page fills the screen and what sticks out is cut off
+Padding takes the colour of the page's own margin (before **Tự cắt viền trắng** crops it), so it does not show as a border.
+**Làm rõ cho màn e-ink** (`--enhance`) makes pages gray, stretches the contrast so that the paper is white and the ink black, and sharpens lightly.
+Wide pages can be split, kept, or turned a quarter turn (`--widepage rotate`).
+**Xem trước 4 trang đầu của chương** in the download options shows the first pages of a chapter inside a frame like the reader's, before downloading.
+
+In **Thư viện**, **Chuyển truyện cho máy đọc** does the same for files already downloaded: it previews pages of a series and writes a converted copy of every CBZ into a new series folder named `<series> [<device>]`; the originals are not touched.
+
 ## Updating covers of the library
 
 In **Thư viện**, **Cập nhật ảnh bìa cho tất cả** (or **Cập nhật bìa** on one series) gives the CBZ files already in the library their proper cover, without downloading the chapters again.

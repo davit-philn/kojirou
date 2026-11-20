@@ -33,6 +33,12 @@ img {
 var pageTemplate = template.Must(template.New("page").Parse(pageTemplateString))
 
 func GenerateMOBI(manga mangadex.Manga, widepage WidepagePolicy, crop bool, ltr bool) mobi.Book {
+	return GenerateMOBIWith(manga, PageOptions{Widepage: widepage, Autocrop: crop, LTR: ltr})
+}
+
+// GenerateMOBIWith is GenerateMOBI with every page option, including the
+// device the pages are prepared for.
+func GenerateMOBIWith(manga mangadex.Manga, opts PageOptions) mobi.Book {
 	chapters := make([]mobi.Chapter, 0)
 	images := make([]image.Image, 0)
 	pageImageIndex := 1
@@ -43,7 +49,7 @@ func GenerateMOBI(manga mangadex.Manga, widepage WidepagePolicy, crop bool, ltr 
 			groupNames = append(groupNames, chap.Info.GroupNames...)
 			pages := make([]string, 0)
 			for _, img := range chap.Sorted() {
-				images = append(images, CropAndSplit(img, widepage, crop, ltr)...)
+				images = append(images, ProcessPage(img, opts)...)
 				pages = append(pages, templateToString(pageTemplate, records.To32(pageImageIndex)))
 				pageImageIndex++
 			}

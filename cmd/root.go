@@ -17,6 +17,9 @@ var (
 	rankArg             string
 	autocropArg         bool
 	widepageArg         WidepagePolicyArg
+	deviceArg           string
+	fitModeArg          string
+	enhanceArg          bool
 	formatArg           FormatArg = FormatMOBI
 	sourceConfigArg     string
 	fillConfigArg       string
@@ -190,7 +193,10 @@ func init() {
 	rootCmd.Flags().StringVarP(&languageArg, "language", "l", "en", "language for chapter downloads")
 	rootCmd.Flags().StringVarP(&rankArg, "rank", "r", "most", "chapter ranking method to use")
 	rootCmd.Flags().BoolVarP(&autocropArg, "autocrop", "a", false, "crop whitespace from pages automatically")
-	rootCmd.Flags().VarP(&widepageArg, "widepage", "w", "split wide pages automatically")
+	rootCmd.Flags().VarP(&widepageArg, "widepage", "w", "what to do with wide pages: preserve, split, preserve-and-split, split-and-preserve or rotate")
+	rootCmd.Flags().StringVar(&deviceArg, "device", "", "fit every page to a screen: kindle-pw3, kindle-pw4, kindle-pw5, kindle-oasis, kindle-basic or kobo-clara")
+	rootCmd.Flags().StringVar(&fitModeArg, "fit-mode", "", "how pages fill the --device screen: smart (default), fit or cover")
+	rootCmd.Flags().BoolVar(&enhanceArg, "enhance", false, "make pages gray, clearer and sharper for an e-ink screen")
 	rootCmd.Flags().StringVar(&sourceConfigArg, "source-config", "", "JSON file describing a CSS-selector source; <identifier> is then the series page URL")
 	rootCmd.Flags().StringVar(&fillConfigArg, "fill-config", "", "JSON file describing a second website; chapters MangaDex lacks are taken from it (needs --fill-url)")
 	rootCmd.Flags().StringVar(&volumesFromArg, "volumes-from", "", "MangaDex series (ID or link) that decides the volumes and covers of a --source-config series")

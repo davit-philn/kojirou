@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/leotaku/kojirou/cmd/device"
 	"github.com/leotaku/kojirou/cmd/filter"
 	"github.com/leotaku/kojirou/cmd/formats/cbz"
 	"github.com/leotaku/kojirou/cmd/formats/disk"
@@ -429,7 +430,7 @@ func (w *mobiWriter) Has(id md.Identifier) bool {
 }
 
 func (w *mobiWriter) Write(id md.Identifier, manga md.Manga, volume md.Volume, p Progress) error {
-	book := kindle.GenerateMOBI(manga, w.opts.Widepage, w.opts.Autocrop, w.opts.LeftToRight)
+	book := kindle.GenerateMOBIWith(manga, w.opts.pageOptions())
 	book.RightToLeft = !w.opts.LeftToRight
 	book.Title = fmt.Sprintf("%v: %v",
 		manga.Info.Title,
@@ -455,10 +456,24 @@ func (w *cbzWriter) Has(id md.Identifier) bool {
 func (w *cbzWriter) Write(id md.Identifier, manga md.Manga, _ md.Volume, p Progress) error {
 	return w.dir.Write(id, manga, cbz.Options{
 		Process: func(img image.Image) []image.Image {
-			return kindle.CropAndSplit(img, w.opts.Widepage, w.opts.Autocrop, w.opts.LeftToRight)
+			return kindle.ProcessPage(img, w.opts.pageOptions())
+		},
+		Cover: func(img image.Image) image.Image {
+			// A cover is never cropped or split: it only goes to the screen's size.
+			dev, _ := w.opts.DeviceOptions()
+			return device.Apply(img, dev)
 		},
 		RightToLeft: !w.opts.LeftToRight,
 		JPEGQuality: w.opts.JPEGQuality,
 		Lossless:    w.opts.Lossless,
 	}, p)
+}
+
+// processFirst prepares a page and returns its first result.
+func processFirst(img image.Image, o kindle.PageOptions) image.Image {
+	if out := kindle.ProcessPage(img, o); len(out) > 0 {
+		return out[0]
+	}
+
+	return img
 }

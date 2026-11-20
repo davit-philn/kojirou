@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/leotaku/kojirou/cmd/device"
 	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
 	"github.com/leotaku/kojirou/cmd/formats/selector"
@@ -74,6 +75,7 @@ type Server struct {
 	meta    *MetaStore
 	// coversMu lets one cover update rewrite files at a time.
 	coversMu  sync.Mutex
+	convertMu sync.Mutex
 	writtenMu sync.Mutex
 	written   map[string]time.Time
 }
@@ -142,6 +144,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/library/{series}/{file}", s.handleLibraryFile)
 	mux.HandleFunc("GET /api/library/{series}/{file}/cover", s.handleLibraryCover)
 	mux.HandleFunc("POST /api/library/covers", s.handleLibraryCovers)
+	mux.HandleFunc("GET /api/library/{series}/{file}/preview", s.handleLibraryPreview)
+	mux.HandleFunc("POST /api/library/convert", s.handleLibraryConvert)
+	mux.HandleFunc("POST /api/preview", s.handlePreview)
 	mux.HandleFunc("GET /api/sources", s.handleListSources)
 	mux.HandleFunc("POST /api/sources", s.handleSaveSource)
 	mux.HandleFunc("DELETE /api/sources/{name}", s.handleDeleteSource)
@@ -290,6 +295,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"sources":    names,
 		"catalogues": catalogues,
 		"hosts":      hosts,
+		"devices":    device.Profiles,
 	})
 }
 
@@ -580,6 +586,10 @@ type downloadRequest struct {
 	RightToLeft *bool  `json:"rightToLeft"`
 	Autocrop    bool   `json:"autocrop"`
 	Widepage    string `json:"widepage"`
+	// Device, FitMode and Enhance prepare pages for an e-reader's screen.
+	Device      string `json:"device"`
+	FitMode     string `json:"fitMode"`
+	Enhance     bool   `json:"enhance"`
 	DataSaver   string `json:"dataSaver"`
 	JPEGQuality int    `json:"jpegQuality"`
 	Lossless    bool   `json:"lossless"`
@@ -593,6 +603,7 @@ var (
 		"split":              kindle.WidepagePolicySplit,
 		"preserve-and-split": kindle.WidepagePolicyPreserveAndSplit,
 		"split-and-preserve": kindle.WidepagePolicySplitAndPreserve,
+		"rotate":             kindle.WidepagePolicyRotate,
 	}
 	dataSaverPolicies = map[string]download.DataSaverPolicy{
 		"":         download.DataSaverPolicyNo,
@@ -694,6 +705,9 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 	if !ok {
 		return zero, errors.New("invalid data saver option")
 	}
+	if _, err := (job.Options{Device: req.Device, FitMode: req.FitMode}).DeviceOptions(); err != nil {
+		return zero, err
+	}
 	quality := req.JPEGQuality
 	if quality == 0 {
 		quality = 90
@@ -723,6 +737,9 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		Autocrop:        req.Autocrop,
 		Widepage:        widepage,
 		LeftToRight:     !rtl,
+		Device:          req.Device,
+		FitMode:         req.FitMode,
+		Enhance:         req.Enhance,
 		DataSaver:       saver,
 		JPEGQuality:     quality,
 		Lossless:        req.Lossless,

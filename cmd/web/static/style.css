@@ -195,3 +195,10 @@ pre.result { background: var(--surface-2); padding: .75rem; border-radius: 8px; 
 .lib-thumb { height: 48px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; background: var(--surface-2); flex: none; }
 .lib-cover.none, .lib-thumb.none { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: .65rem; text-align: center; }
 @media (max-width: 560px) { .lib-cover { width: 72px; } }
+
+.preview-row { display: flex; gap: 1.25rem; overflow-x: auto; padding: .6rem 0; }
+.preview-pair { display: flex; gap: .5rem; flex: none; align-items: flex-start; }
+.preview-pair figure { margin: 0; text-align: center; font-size: .75rem; color: var(--muted); }
+.preview-pair figure > img { height: 240px; border-radius: 4px; display: block; background: #eee; }
+.kindle-frame { border: 9px solid #1c1c1c; border-radius: 14px; background: #fff; display: inline-block; }
+.kindle-frame img { height: 222px; display: block; }

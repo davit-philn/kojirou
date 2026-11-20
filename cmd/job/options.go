@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/leotaku/kojirou/cmd/device"
 	"github.com/leotaku/kojirou/cmd/formats"
 	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
@@ -72,6 +73,13 @@ type Options struct {
 	// a long time. Use it when a person is waiting for the result.
 	Interactive bool
 
+	// Device is the ID of a screen profile (see device.Profiles) the pages
+	// are fitted to, FitMode says how ("fit", "smart" or "cover"; default
+	// "smart") and Enhance makes pages gray and clearer for an e-ink screen.
+	Device  string
+	FitMode string
+	Enhance bool
+
 	Format           Format
 	Autocrop         bool
 	Widepage         kindle.WidepagePolicy
@@ -97,6 +105,9 @@ func (o Options) validate() error {
 	}
 	if o.Format == FormatCBZ && o.KindleFolderMode {
 		return errors.New("--kindle-folder-mode is not supported with --format=cbz")
+	}
+	if _, err := o.DeviceOptions(); err != nil {
+		return err
 	}
 	if o.JPEGQuality < 0 || o.JPEGQuality > 100 {
 		return errors.New("--jpeg-quality must be between 1 and 100")
@@ -185,4 +196,32 @@ func ParseVolume(text string) (md.Identifier, error) {
 	}
 
 	return id, nil
+}
+
+// DeviceOptions turns the device settings into what the page code needs.
+func (o Options) DeviceOptions() (device.Options, error) {
+	var opts device.Options
+	if o.Device != "" {
+		profile, ok := device.Lookup(o.Device)
+		if !ok {
+			return opts, fmt.Errorf("unknown device %q", o.Device)
+		}
+		opts.Profile = profile
+	}
+	switch mode := device.Mode(o.FitMode); mode {
+	case "", device.Fit, device.Smart, device.Cover:
+		opts.Mode = mode
+	default:
+		return opts, fmt.Errorf("unknown fit mode %q (use fit, smart or cover)", o.FitMode)
+	}
+	opts.Enhance = o.Enhance
+
+	return opts, nil
+}
+
+// pageOptions are the options every page of a job goes through.
+func (o Options) pageOptions() kindle.PageOptions {
+	dev, _ := o.DeviceOptions()
+
+	return kindle.PageOptions{Widepage: o.Widepage, Autocrop: o.Autocrop, LTR: o.LeftToRight, Device: dev}
 }

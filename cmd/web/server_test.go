@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/leotaku/kojirou/cmd/formats/download"
+	"github.com/leotaku/kojirou/cmd/formats/kindle"
 	"github.com/leotaku/kojirou/cmd/formats/wikipedia"
 	"github.com/leotaku/kojirou/cmd/job"
 	md "github.com/leotaku/kojirou/mangadex"
@@ -1334,5 +1336,147 @@ func TestUpdateCoversGivesUpWhenPicturesCannotBeDownloaded(t *testing.T) {
 	notes := strings.Join(got.Notes, " | ")
 	if got.Updated != 0 || got.Status != "nothing" || !strings.Contains(notes, "cover download failed") || !strings.Contains(notes, "unreachable") {
 		t.Errorf("result = %+v, want the failure explained", got)
+	}
+}
+
+func TestDownloadRequestCarriesTheDeviceSettings(t *testing.T) {
+	got := make(chan job.Options, 2)
+	e := newEnv(t, func(c *Config) {
+		c.Runner = func(ctx context.Context, opts job.Options, rep job.Reporter) (*job.Result, error) {
+			got <- opts
+			return &job.Result{}, nil
+		}
+	})
+	e.saveSource("demo")
+	start := func(extra map[string]any) int {
+		body := map[string]any{"source": "demo", "id": e.site.URL + "/series", "chapterIds": []string{"x"}}
+		for k, v := range extra {
+			body[k] = v
+		}
+
+		return e.do("POST", "/api/downloads", body).Code
+	}
+
+	if code := start(map[string]any{"device": "kindle-pw3", "fitMode": "smart", "enhance": true, "widepage": "rotate"}); code != 202 {
+		t.Fatalf("valid settings: status %d", code)
+	}
+	if opts := <-got; opts.Device != "kindle-pw3" || opts.FitMode != "smart" || !opts.Enhance || opts.Widepage != kindle.WidepagePolicyRotate {
+		t.Errorf("settings not passed on: %+v", opts)
+	}
+	for name, extra := range map[string]map[string]any{
+		"unknown device":   {"device": "palm-pilot"},
+		"unknown fit mode": {"device": "kindle-pw3", "fitMode": "squash"},
+	} {
+		if code := start(extra); code != 400 {
+			t.Errorf("%s: status %d, want 400", name, code)
+		}
+	}
+}
+
+func TestPreviewShowsPagesAsTheyWillBeWritten(t *testing.T) {
+	e := newEnv(t, nil)
+	e.saveSource("demo")
+	rec := e.do("POST", "/api/preview", map[string]any{
+		"source": "demo", "id": e.site.URL + "/series", "chapterIds": []string{e.site.URL + "/c/1"},
+		"device": "kindle-pw3", "fitMode": "fit", "enhance": true,
+	})
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	got := decode[struct {
+		Pages  []previewPageJSON
+		Screen struct{ Width, Height int }
+	}](t, rec)
+	if len(got.Pages) != 2 || got.Screen.Width != 1072 || got.Screen.Height != 1448 {
+		t.Fatalf("preview = %d pages, screen %+v", len(got.Pages), got.Screen)
+	}
+	raw := strings.TrimPrefix(got.Pages[0].After, "data:image/jpeg;base64,")
+	data, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width != 536 || cfg.Height != 724 {
+		t.Errorf("the preview of a page on the screen is %dx%d (%v), want 536x724 (half of 1072x1448)", cfg.Width, cfg.Height, err)
+	}
+
+	if rec := e.do("POST", "/api/preview", map[string]any{"source": "demo", "id": e.site.URL + "/series", "chapterIds": []string{}}); rec.Code != 400 {
+		t.Errorf("no chapter: status %d, want 400", rec.Code)
+	}
+	if rec := e.do("POST", "/api/preview", map[string]any{"source": "demo", "id": e.site.URL + "/series", "chapterIds": []string{"x"}, "device": "nope"}); rec.Code != 400 {
+		t.Errorf("bad device: status %d, want 400", rec.Code)
+	}
+}
+
+func TestConvertALibrarySeriesForADevice(t *testing.T) {
+	e := newEnv(t, nil)
+	if err := os.MkdirAll(filepath.Join(e.library, "Series"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeComic(t, filepath.Join(e.library, "Series", "0001.cbz"), 1)
+	original, _ := os.ReadFile(filepath.Join(e.library, "Series", "0001.cbz"))
+
+	rec := e.do("POST", "/api/library/convert", map[string]any{"series": "Series", "device": "kindle-pw3", "fitMode": "fit", "enhance": true})
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	got := decode[convertResult](t, rec)
+	if got.Converted != 1 || got.Failed != 0 || got.Output != "Series [kindle-pw3]" {
+		t.Fatalf("result = %+v", got)
+	}
+
+	out := filepath.Join(e.library, "Series [kindle-pw3]", "0001.cbz")
+	zr, err := zip.OpenReader(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close() //nolint:errcheck
+	pictures := 0
+	var infoXML string
+	for _, f := range zr.File {
+		rc, _ := f.Open()
+		data, _ := io.ReadAll(rc)
+		rc.Close() //nolint:errcheck
+		if f.Name == "ComicInfo.xml" {
+			infoXML = string(data)
+			continue
+		}
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil || cfg.Width != 1072 || cfg.Height != 1448 {
+			t.Errorf("%s is %dx%d (%v), want 1072x1448", f.Name, cfg.Width, cfg.Height, err)
+		}
+		pictures++
+	}
+	if pictures != 3 || !strings.Contains(infoXML, `Type="FrontCover"`) {
+		t.Errorf("%d pictures, ComicInfo %q: the cover must stay the cover", pictures, infoXML)
+	}
+	if after, _ := os.ReadFile(filepath.Join(e.library, "Series", "0001.cbz")); !bytes.Equal(after, original) {
+		t.Error("the original file must not be changed")
+	}
+	lib := decode[[]LibrarySeries](t, e.do("GET", "/api/library", nil))
+	if len(lib) != 2 {
+		t.Errorf("the converted copy should show as its own series: %+v", lib)
+	}
+
+	// One page, before and after.
+	rawPage := e.do("GET", "/api/library/Series/0001.cbz/preview?page=0&raw=1", nil)
+	fitted := e.do("GET", "/api/library/Series/0001.cbz/preview?page=0&device=kindle-pw3&fitMode=fit", nil)
+	rawCfg, err1 := jpeg.DecodeConfig(rawPage.Body)
+	fitCfg, err2 := jpeg.DecodeConfig(fitted.Body)
+	if err1 != nil || err2 != nil || rawCfg.Width != 360 || fitCfg.Width != 536 || fitCfg.Height != 724 {
+		t.Errorf("preview sizes: raw %dx%d (%v), fitted %dx%d (%v)", rawCfg.Width, rawCfg.Height, err1, fitCfg.Width, fitCfg.Height, err2)
+	}
+
+	for name, body := range map[string]map[string]any{
+		"nothing to apply": {"series": "Series"},
+		"bad device":       {"series": "Series", "device": "nope"},
+		"unknown series":   {"series": "Nope", "device": "kindle-pw3"},
+	} {
+		if rec := e.do("POST", "/api/library/convert", body); rec.Code != 400 && rec.Code != 404 {
+			t.Errorf("%s: status %d", name, rec.Code)
+		}
+	}
+	if rec := e.do("GET", "/api/library/Series/9999.cbz/preview", nil); rec.Code != 404 {
+		t.Errorf("a missing file: status %d, want 404", rec.Code)
 	}
 }

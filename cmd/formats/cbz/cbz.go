@@ -27,7 +27,10 @@ const DefaultJPEGQuality = 90
 type Processor func(image.Image) []image.Image
 
 type Options struct {
-	Process     Processor
+	Process Processor
+	// Cover prepares the cover picture the same way pages are prepared; nil
+	// leaves it as it is.
+	Cover       func(image.Image) image.Image
 	RightToLeft bool
 
 	// JPEGQuality is the JPEG quality from 1 to 100, or 0 for the default.
@@ -82,6 +85,9 @@ func Generate(w io.Writer, manga md.Manga, opts Options) error {
 	if opts.Process == nil {
 		opts.Process = func(img image.Image) []image.Image { return []image.Image{img} }
 	}
+	if opts.Cover == nil {
+		opts.Cover = func(img image.Image) image.Image { return img }
+	}
 
 	quality := opts.JPEGQuality
 	if quality == 0 {
@@ -119,7 +125,7 @@ func Generate(w io.Writer, manga md.Manga, opts Options) error {
 
 	for _, vol := range manga.Sorted() {
 		if vol.Cover != nil {
-			if err := add(vol.Cover, "FrontCover"); err != nil {
+			if err := add(opts.Cover(vol.Cover), "FrontCover"); err != nil {
 				return fmt.Errorf("cover: %w", err)
 			}
 		}
