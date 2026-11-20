@@ -277,7 +277,7 @@ Without any volume rule every chapter goes into volume 1.
 If the website does not tell the volumes, split them yourself with `volume_ranges` (for example following the official release list), or let `volume_regex` read them from titles that contain the volume.
 When a volume rule is set, chapters that no rule matches go into a separate `Special` volume unless `chapters_per_volume` is set.
 Chapters taken from a second site with `--fill-config` ignore these rules: they join the volume of their neighbours on MangaDex.
-Pages are downloaded a few at a time and retried with backoff on HTTP 429 and 5xx responses.
+Pages are downloaded a few at a time. Chapter pages are requested at least 400ms apart, and both chapter pages and images are retried with growing pauses on HTTP 429 and 5xx responses (honouring `Retry-After`); after a 429 every request slows down for a while. If a site still limits you, lower `max_concurrent_downloads` to 1 or 2.
 To try it without a real website, run `python3 contrib/selector_demo.py` and follow the command it prints.
 If a selector finds nothing, the error says what the page contained (its title, how many links and images it has, which attributes the matched elements carry) and whether it looks like a browser-check page, which this tool cannot pass.
 Only plain HTML is read, so sites that load images with JavaScript are not supported. A source has no covers of its own: a series opened from the browse grid uses the cover shown there for every volume, and with volumes taken from MangaDex the covers are MangaDex's, one per volume.

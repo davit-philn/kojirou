@@ -270,7 +270,10 @@ func fetchDocument(ctx context.Context, client *http.Client, rawURL string, cfg 
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("get %v: status %v", target, resp.Status)
+		return nil, nil, &httpStatusError{
+			url: target.String(), status: resp.Status, code: resp.StatusCode,
+			after: parseRetryAfter(resp.Header.Get("Retry-After")),
+		}
 	}
 
 	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, maxBodyBytes))
@@ -287,6 +290,23 @@ func fetchDocument(ctx context.Context, client *http.Client, rawURL string, cfg 
 	}
 
 	return target, doc, nil
+}
+
+// httpStatusError is a page that answered with something other than 200.
+type httpStatusError struct {
+	url    string
+	status string
+	code   int
+	// after is how long the server asked to wait before trying again.
+	after time.Duration
+}
+
+func (e *httpStatusError) Error() string { return fmt.Sprintf("get %v: status %v", e.url, e.status) }
+
+// retryable reports whether trying again later can help: the server is
+// overloaded or limits the request rate.
+func (e *httpStatusError) retryable() bool {
+	return e.code == http.StatusTooManyRequests || e.code >= 500
 }
 
 func resolveAgainstBase(baseURL, rawURL string) (*url.URL, error) {

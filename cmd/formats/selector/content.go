@@ -2,6 +2,7 @@ package selector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -14,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/leotaku/kojirou/cmd/formats"
@@ -23,6 +25,8 @@ import (
 )
 
 const (
+	pageAttempts  = 5
+	pageSpacing   = 400 * time.Millisecond
 	maxAttempts   = 3
 	maxRetryDelay = 30 * time.Second
 	baseRetryWait = 2 * time.Second
@@ -38,6 +42,11 @@ var (
 // Provider adapts a Source to the manga model used by the rest of the
 // application. The "identifier" of a series is the URL of its chapter list.
 type Provider struct {
+	// pages paces the requests for chapter pages, images the downloads of
+	// pictures; both slow down for a while when the site answers 429.
+	pages  *gate
+	images *gate
+
 	source   *Source
 	cfg      SourceConfig
 	lang     language.Tag
@@ -49,7 +58,10 @@ type Provider struct {
 
 func NewProvider(cfg SourceConfig, lang language.Tag) *Provider {
 	rules, err := compileVolumeRules(cfg)
-	return &Provider{source: New(cfg), cfg: cfg, lang: lang, rules: rules, rulesErr: err, retryWait: baseRetryWait}
+	return &Provider{
+		source: New(cfg), cfg: cfg, lang: lang, rules: rules, rulesErr: err, retryWait: baseRetryWait,
+		pages: newGate(pageSpacing), images: newGate(0),
+	}
 }
 
 func (p *Provider) Skeleton(_ context.Context, seriesURL string) (*md.Manga, error) {
@@ -161,7 +173,7 @@ func (p *Provider) Pages(parent context.Context, chapters md.ChapterList, prog f
 			break
 		}
 		prog.Increase(1)
-		urls, err := p.source.FetchImages(egCtx, chapter.Info.ID)
+		urls, err := p.fetchChapterImages(egCtx, chapter.Info.ID)
 		if err != nil {
 			listErr = fmt.Errorf("chapter %v: %w", chapter.Info.Identifier, err)
 			cancel()
@@ -209,6 +221,40 @@ func (p *Provider) Pages(parent context.Context, chapters md.ChapterList, prog f
 	return results, nil
 }
 
+// fetchChapterImages reads a chapter page, a little apart from the previous
+// request and again, with growing pauses, when the site limits the rate.
+func (p *Provider) fetchChapterImages(ctx context.Context, chapterURL string) ([]string, error) {
+	var lastErr error
+	for attempt := 0; attempt < pageAttempts; attempt++ {
+		if attempt > 0 {
+			if err := sleep(ctx, p.backoff(attempt, lastErr)); err != nil {
+				return nil, err
+			}
+		}
+		if err := p.pages.wait(ctx); err != nil {
+			return nil, err
+		}
+
+		urls, err := p.source.FetchImages(ctx, chapterURL)
+		if err == nil {
+			p.pages.succeeded()
+			p.images.succeeded()
+			return urls, nil
+		}
+		var status *httpStatusError
+		if !errors.As(err, &status) || !status.retryable() {
+			return nil, err
+		}
+		if status.code == http.StatusTooManyRequests {
+			p.pages.slowDown()
+			p.images.slowDown()
+		}
+		lastErr = &retryAfterError{status: status.status, after: status.after}
+	}
+
+	return nil, fmt.Errorf("the website keeps answering %v; wait a while (minutes) and download again, or set max_concurrent_downloads to 1", lastErr)
+}
+
 func (p *Provider) download(ctx context.Context, imageURL, referer string) (image.Image, error) {
 	client := p.source.Client()
 	var lastErr error
@@ -217,6 +263,9 @@ func (p *Provider) download(ctx context.Context, imageURL, referer string) (imag
 			if err := sleep(ctx, p.backoff(attempt, lastErr)); err != nil {
 				return nil, err
 			}
+		}
+		if err := p.images.wait(ctx); err != nil {
+			return nil, err
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
@@ -237,10 +286,15 @@ func (p *Provider) download(ctx context.Context, imageURL, referer string) (imag
 
 		img, retryable, err := decodeResponse(resp)
 		if err == nil {
+			p.images.succeeded()
 			return img, nil
 		}
 		if !retryable {
 			return nil, err
+		}
+		if re, ok := err.(*retryAfterError); ok && strings.HasPrefix(re.status, "429") {
+			p.pages.slowDown()
+			p.images.slowDown()
 		}
 		lastErr = err
 	}
@@ -339,4 +393,62 @@ func hostOf(rawURL, baseURL string) string {
 	}
 
 	return "web"
+}
+
+// gate spaces requests apart. Its pause grows when the site answers 429 and
+// shrinks again as requests succeed.
+type gate struct {
+	mu      sync.Mutex
+	base    time.Duration
+	current time.Duration
+	next    time.Time
+	// floor and ceiling bound the pause after slowing down.
+	floor, ceiling time.Duration
+}
+
+func newGate(base time.Duration) *gate {
+	return &gate{base: base, current: base, floor: 500 * time.Millisecond, ceiling: 8 * time.Second}
+}
+
+// wait blocks until it is this request's turn.
+func (g *gate) wait(ctx context.Context) error {
+	g.mu.Lock()
+	now := time.Now()
+	at := g.next
+	if at.Before(now) {
+		at = now
+	}
+	g.next = at.Add(g.current)
+	g.mu.Unlock()
+
+	if d := time.Until(at); d > 0 {
+		return sleep(ctx, d)
+	}
+
+	return nil
+}
+
+// slowDown doubles the pause (at least 500ms, at most 8s).
+func (g *gate) slowDown() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.current *= 2
+	if g.current < g.floor {
+		g.current = g.floor
+	}
+	if g.current > g.ceiling {
+		g.current = g.ceiling
+	}
+}
+
+// succeeded lets the pause shrink towards its normal size.
+func (g *gate) succeeded() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.current > g.base {
+		g.current -= g.current / 10
+		if g.current < g.base {
+			g.current = g.base
+		}
+	}
 }

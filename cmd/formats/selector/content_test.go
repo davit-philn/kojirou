@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,6 +56,10 @@ func providerFor(srv *httptest.Server, mutate func(*SourceConfig)) *Provider {
 	}
 	p := NewProvider(cfg, language.English)
 	p.retryWait = time.Millisecond
+	// Keep the pacing out of the tests' way.
+	for _, g := range []*gate{p.pages, p.images} {
+		g.base, g.current, g.floor, g.ceiling = 0, 0, time.Millisecond, 2*time.Millisecond
+	}
 
 	return p
 }
@@ -221,4 +226,87 @@ func chaptersFor(t *testing.T, chapterURL string) mdChapterList {
 		Identifier:       mdIdent("1"),
 		VolumeIdentifier: mdIdent("1"),
 	}}}
+}
+
+func chapterListedAt(srv *httptest.Server) mdChapterList {
+	return mdChapterList{{Info: mdChapterInfo{ID: srv.URL + "/c/1", Identifier: mdIdent("1")}}}
+}
+
+// A chapter page that answers 429 is asked again after a pause, like the
+// images are; it used to fail the whole volume.
+func TestChapterPageRetriesOnTooManyRequests(t *testing.T) {
+	var pageCalls int32
+	img := pngBytes(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/c/1":
+			if atomic.AddInt32(&pageCalls, 1) <= 2 {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			_, _ = w.Write([]byte(`<div id="reader"><img src="/i/1.png"><img src="/i/2.png"></div>`))
+		default:
+			_, _ = w.Write(img)
+		}
+	}))
+	defer srv.Close()
+
+	p := providerFor(srv, nil)
+	images, err := p.Pages(context.Background(), chapterListedAt(srv), nopProgress{})
+	if err != nil || len(images) != 2 {
+		t.Fatalf("images = %d, err = %v; want 2 images after two 429 answers", len(images), err)
+	}
+	if pageCalls != 3 {
+		t.Errorf("chapter page requested %d times, want 3", pageCalls)
+	}
+}
+
+func TestChapterPageGivesUpWithAnExplanation(t *testing.T) {
+	var pageCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&pageCalls, 1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	p := providerFor(srv, nil)
+	_, err := p.Pages(context.Background(), chapterListedAt(srv), nopProgress{})
+	if err == nil || !strings.Contains(err.Error(), "429") || !strings.Contains(err.Error(), "wait a while") {
+		t.Fatalf("err = %v, want an explanation that the website limits requests", err)
+	}
+	if pageCalls != pageAttempts {
+		t.Errorf("chapter page requested %d times, want %d", pageCalls, pageAttempts)
+	}
+	// Other errors are not retried.
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { atomic.AddInt32(&pageCalls, 100); http.NotFound(w, r) }))
+	defer notFound.Close()
+	pageCalls = 0
+	if _, err := providerFor(notFound, nil).Pages(context.Background(), chapterListedAt(notFound), nopProgress{}); err == nil || pageCalls != 100 {
+		t.Errorf("a 404 must fail at once, got err %v after %d requests", err, pageCalls/100)
+	}
+}
+
+func TestGateSlowsDownAndRecovers(t *testing.T) {
+	g := newGate(100 * time.Millisecond)
+	g.slowDown()
+	if g.current != 500*time.Millisecond {
+		t.Errorf("after one slow-down the pause is %v, want the 500ms floor", g.current)
+	}
+	g.slowDown()
+	if g.current != time.Second {
+		t.Errorf("after two slow-downs the pause is %v, want 1s", g.current)
+	}
+	for i := 0; i < 100; i++ {
+		g.slowDown()
+	}
+	if g.current != g.ceiling {
+		t.Errorf("pause %v exceeds the ceiling %v", g.current, g.ceiling)
+	}
+	for i := 0; i < 200; i++ {
+		g.succeeded()
+	}
+	if g.current != g.base {
+		t.Errorf("pause %v did not return to its base %v", g.current, g.base)
+	}
 }
