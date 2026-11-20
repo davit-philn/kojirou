@@ -378,6 +378,11 @@ async function seriesPage(params) {
   let searchSeq = 0; // a newer search makes an older answer obsolete
   let volPanel = null;
   let manualOpen = false;
+  // A page (e.g. a BookWalker series page) that shows each volume with its cover.
+  let coverPage = store.get("coverPage", {})[source + "|" + id] || "";
+  let coverPreview = null; // { covers } or { error } after "Xem thử"
+  let coverBusy = false;
+  let coversEl = null;
   // Chapters moved to another volume by hand: chapter id -> volume ("3", "3.5" or "Special").
   const overrideKey = source + "|" + id;
   let overrides = store.get("volumeOverrides", {})[overrideKey] || {};
@@ -411,7 +416,7 @@ async function seriesPage(params) {
     try {
       series = await api("/api/series?" + p);
     } catch (err) {
-      head.replaceChildren(...nodes(h("p", null, h("a", { href: "#/" }, "← Quay lại")), fillPanel(), volumesPanel()));
+      head.replaceChildren(...nodes(h("p", null, h("a", { href: "#/" }, "← Quay lại")), fillPanel(), volumesPanel(), coversPanel()));
       chaptersBox.replaceChildren(errorBox(err));
       return;
     }
@@ -445,7 +450,59 @@ async function seriesPage(params) {
               langSelect(lang, (v) => { lang = v; loadSeries(); }, series.languages))))),
       fillPanel(),
       volumesPanel(),
+      coversPanel(),
       optionsPanel()));
+  }
+
+  function saveCoverPage(url) {
+    coverPage = url;
+    const saved = store.get("coverPage", {});
+    if (url) saved[source + "|" + id] = url; else delete saved[source + "|" + id];
+    store.set("coverPage", saved);
+  }
+
+  function refreshCoversPanel() {
+    const old = coversEl;
+    const fresh = coversPanel();
+    if (old && old.isConnected) old.replaceWith(fresh);
+  }
+
+  function coversPanel() {
+    const input = h("input", { type: "url", value: coverPage, placeholder: "https://bookwalker.com/series/…", "aria-label": "Trang loạt truyện có bìa từng tập" });
+    const preview = async () => {
+      const url = input.value.trim();
+      if (!url) { toast("Dán địa chỉ trang loạt truyện có bìa từng tập", { bad: true }); return; }
+      coverBusy = true; coverPreview = null; coverPage = url; refreshCoversPanel();
+      try {
+        coverPreview = await api("/api/covers/preview?" + new URLSearchParams({ url }), { timeout: 60000 });
+      } catch (err) {
+        coverPreview = { error: err.message };
+      } finally {
+        coverBusy = false; refreshCoversPanel();
+      }
+    };
+    const body = coverBusy ? spinner()
+      : !coverPreview ? null
+      : coverPreview.error ? h("div", { class: "notice" }, coverPreview.error)
+      : h("div", null,
+          h("p", { class: "muted small" }, `Tìm thấy bìa của ${coverPreview.covers.length} tập. Kiểm tra rồi bấm “Dùng bìa này”.`),
+          h("div", { class: "row", style: "gap:.4rem;overflow-x:auto;flex-wrap:nowrap" },
+            coverPreview.covers.map((c) => h("figure", { style: "margin:0;text-align:center;flex:none" },
+              h("img", { src: c.url, alt: "", style: "height:110px;border-radius:4px", referrerpolicy: "no-referrer", loading: "lazy" }),
+              h("figcaption", { class: "small muted" }, `Tập ${c.volume}`)))),
+          h("div", { class: "row", style: "margin-top:.6rem" },
+            h("button", { class: "btn primary", onclick: () => { saveCoverPage(input.value.trim()); toast("Sẽ dùng các bìa này khi tải."); refreshCoversPanel(); } }, "Dùng bìa này")));
+    coversEl = h("details", { class: "panel", open: !!coverPage || coverBusy || !!coverPreview },
+      h("summary", null, "Bìa từng tập từ trang khác",
+        coverPage && !coverBusy && !(coverPreview && coverPreview.error) && store.get("coverPage", {})[source + "|" + id] ? h("span", { class: "chip ok", style: "margin-left:.5rem" }, "đang dùng") : null),
+      h("p", { class: "muted small" }, "Dán địa chỉ trang loạt truyện của một cửa hàng sách (ví dụ BookWalker) liệt kê từng tập kèm ảnh bìa. Bìa của các tập khớp số tập sẽ thay bìa mặc định khi tải. Chỉ đọc được trang có bìa nằm sẵn trong HTML; hãy xem điều khoản của website trước khi dùng."),
+      h("div", { class: "row" },
+        h("label", { class: "field grow" }, h("span", null, "Địa chỉ trang loạt truyện"), input),
+        h("button", { class: "btn", onclick: preview }, "Xem thử")),
+      body,
+      store.get("coverPage", {})[source + "|" + id] ? h("div", { class: "row", style: "margin-top:.6rem" },
+        h("button", { class: "btn danger", onclick: () => { saveCoverPage(""); coverPreview = null; refreshCoversPanel(); } }, "Bỏ bìa từ trang khác")) : null);
+    return coversEl;
   }
 
   function setVolumesFrom(dexId) {
@@ -851,6 +908,7 @@ async function seriesPage(params) {
         volumesFrom: volumesFrom || undefined,
         volumeOverrides: chosenOverrides(),
         coverUrl: source !== "mangadex" && !volumesFrom ? (params.get("cover") || undefined) : undefined,
+        coverPage: store.get("coverPage", {})[source + "|" + id] || undefined,
       } });
       toast(`Đã thêm “${series.title}” vào hàng đợi.`, { link: { href: "#/downloads", text: "Xem tiến độ" } });
       pollBadge();

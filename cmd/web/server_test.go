@@ -1068,3 +1068,50 @@ func TestDownloadUsesOnlyCoversThatBrowseReturned(t *testing.T) {
 		t.Errorf("CoverURL = %q: an address no browse result contained must be ignored", opts.CoverURL)
 	}
 }
+
+func TestCoverPagePreviewAndDownloadRequest(t *testing.T) {
+	shop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/series/x" {
+			_, _ = w.Write([]byte(`<div><a href="/volume/A/x-vol-1"><img srcset="/c/1.png 480w"></a></div><div><a href="/volume/B/x-vol-2"><img srcset="/c/2.png 480w"></a></div>`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(shop.Close)
+	got := make(chan job.Options, 2)
+	e := newEnv(t, func(c *Config) {
+		c.Runner = func(ctx context.Context, opts job.Options, rep job.Reporter) (*job.Result, error) {
+			got <- opts
+			return &job.Result{}, nil
+		}
+	})
+	e.saveSource("demo")
+
+	preview := decode[struct {
+		Covers []struct{ Volume, URL string }
+	}](t, e.do("GET", "/api/covers/preview?url="+url.QueryEscape(shop.URL+"/series/x"), nil))
+	if len(preview.Covers) != 2 || preview.Covers[1].Volume != "2" || preview.Covers[1].URL != shop.URL+"/c/2.png" {
+		t.Errorf("preview = %+v", preview)
+	}
+	if rec := e.do("GET", "/api/covers/preview?url="+url.QueryEscape(shop.URL+"/nothing"), nil); rec.Code != 422 {
+		t.Errorf("a page without covers: status %d, want 422", rec.Code)
+	}
+
+	page := e.site.URL + "/series"
+	start := func(coverPage string) int {
+		return e.do("POST", "/api/downloads", map[string]any{
+			"source": "demo", "id": page, "chapterIds": []string{"x"}, "coverPage": coverPage,
+		}).Code
+	}
+	if code := start(shop.URL + "/series/x"); code != 202 {
+		t.Fatalf("start: %d", code)
+	}
+	if opts := <-got; opts.CoverPage != shop.URL+"/series/x" {
+		t.Errorf("CoverPage = %q, want the page to be passed to the job", opts.CoverPage)
+	}
+	for _, bad := range []string{"ftp://x/y", "javascript:alert(1)", "/relative"} {
+		if code := start(bad); code != 400 {
+			t.Errorf("cover page %q: status %d, want 400", bad, code)
+		}
+	}
+}

@@ -35,6 +35,10 @@ type Options struct {
 	// stays the main source for volumes and covers. Not combinable with Source.
 	Fill *FillSource
 
+	// CoverPage is the address of a series page that shows every volume with
+	// its cover (e.g. on BookWalker). Those covers replace the source's own
+	// covers for the volumes they exist for.
+	CoverPage string
 	// CoverURL is a cover image of a series from Source; every volume gets it
 	// as its cover. Ignored when VolumesFrom supplies the covers.
 	CoverURL string
@@ -99,6 +103,11 @@ func (o Options) validate() error {
 	}
 	if o.Identifier == "" {
 		return errors.New("no series identifier given")
+	}
+	if o.CoverPage != "" {
+		if u, err := url.Parse(o.CoverPage); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return errors.New("the cover page must be an http(s) address")
+		}
 	}
 	for id, volume := range o.VolumeOverrides {
 		if _, err := ParseVolume(volume); err != nil {

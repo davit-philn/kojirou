@@ -218,6 +218,14 @@ Nothing is uploaded to MangaDex.
 kojirou https://example.org/series/my-series -l vi --source-config source.json --volumes-from https://mangadex.org/title/<id>
 ```
 
+## Volume covers from another page
+
+On a series page, **Bìa từng tập từ trang khác** takes the address of a page that lists a series' volumes with their covers, for example a BookWalker series page (`https://bookwalker.com/series/…/…`).
+Kojirou reads that page (obeying `robots.txt`), finds a link per volume whose address ends in `vol-N` or `volume-N` and the cover image next to it, takes the widest picture the page offers, and uses it as the cover of volume N when downloading.
+These covers replace the source's own covers and MangaDex's for the volumes they match; volumes the page does not show keep their other cover.
+Only covers that are in the page's HTML can be read, and covers belong to their publisher: check the website's terms and use them for your own library.
+**Xem thử** shows what was found before it is used. The choice is remembered per series in the browser and sent with the download (`coverPage`).
+
 ## Fixing volumes by hand
 
 On any series page, **Chỉnh tập thủ công** lets you change how chapters are split into volumes before downloading:

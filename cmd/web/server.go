@@ -125,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/series", s.handleSeries)
 	mux.HandleFunc("GET /api/browse", s.handleBrowse)
 	mux.HandleFunc("GET /api/cover", s.handleCover)
+	mux.HandleFunc("GET /api/covers/preview", s.handleCoversPreview)
 	mux.HandleFunc("GET /api/downloads", s.handleListDownloads)
 	mux.HandleFunc("POST /api/downloads", s.handleStartDownload)
 	mux.HandleFunc("DELETE /api/downloads/{id}", s.handleCancelDownload)
@@ -561,7 +562,9 @@ type downloadRequest struct {
 	VolumeOverrides map[string]string `json:"volumeOverrides"`
 	// CoverURL is the series cover the catalogue showed; it is used as the
 	// cover of every volume of a series from your own source.
-	CoverURL    string `json:"coverUrl"`
+	CoverURL string `json:"coverUrl"`
+	// CoverPage is a series page that shows each volume with its cover.
+	CoverPage   string `json:"coverPage"`
 	Format      string `json:"format"`
 	RightToLeft *bool  `json:"rightToLeft"`
 	Autocrop    bool   `json:"autocrop"`
@@ -659,6 +662,12 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 			return zero, fmt.Errorf("invalid volume %q: use a number such as 3 or 3.5, or Special", volume)
 		}
 	}
+	coverPage := strings.TrimSpace(req.CoverPage)
+	if coverPage != "" {
+		if u, err := url.Parse(coverPage); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || len(coverPage) > 2048 {
+			return zero, errors.New("the cover page must be an http(s) address")
+		}
+	}
 	format := job.Format(req.Format)
 	if format == "" {
 		format = job.FormatCBZ
@@ -697,6 +706,7 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		ChapterIDs:      req.ChapterIDs,
 		VolumeOverrides: req.VolumeOverrides,
 		CoverURL:        s.knownCover(cfg, volumesFrom, req.CoverURL),
+		CoverPage:       coverPage,
 		Force:           req.Force,
 		Format:          format,
 		Autocrop:        req.Autocrop,

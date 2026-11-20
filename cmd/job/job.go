@@ -12,6 +12,7 @@ import (
 	"github.com/leotaku/kojirou/cmd/formats/cbz"
 	"github.com/leotaku/kojirou/cmd/formats/disk"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
+	"github.com/leotaku/kojirou/cmd/formats/selector"
 	md "github.com/leotaku/kojirou/mangadex"
 	"golang.org/x/text/language"
 )
@@ -270,6 +271,10 @@ func getCovers(
 	}
 	p.Done()
 
+	if opts.CoverPage != "" {
+		covers = append(covers, coversFromPage(ctx, opts.CoverPage, manga, rep)...)
+	}
+
 	// Covers from disk should automatically be preferred, because
 	// they appear later in the list and thus should override the
 	// earlier downloaded covers.
@@ -285,6 +290,45 @@ func getCovers(
 	}
 
 	return covers, nil
+}
+
+// coversFromPage takes the covers of the volumes a series page shows. It never
+// fails the job: whatever cannot be read leaves the other covers in place.
+func coversFromPage(ctx context.Context, pageURL string, manga *md.Manga, rep Reporter) md.ImageList {
+	p := rep.Task("Covers from the cover page", true)
+	found, err := selector.FindVolumeCovers(ctx, pageURL, nil)
+	if err != nil {
+		p.Cancel(err.Error())
+		return nil
+	}
+
+	wanted := make([]selector.VolumeCover, 0, len(found))
+	ids := make(map[string]md.Identifier, len(found))
+	for _, c := range found {
+		id := md.NewIdentifier(c.Volume)
+		if id.IsSpecial() {
+			continue
+		}
+		for have := range manga.Volumes {
+			if have.Equal(id) {
+				wanted = append(wanted, c)
+				ids[c.Volume] = have
+				break
+			}
+		}
+	}
+	images := selector.DownloadVolumeCovers(ctx, wanted, nil)
+	covers := make(md.ImageList, 0, len(images))
+	for volume, img := range images {
+		covers = append(covers, md.Image{Image: img, VolumeIdentifier: ids[volume]})
+	}
+	if len(covers) == 0 {
+		p.Cancel("No cover matched the volumes")
+		return nil
+	}
+	p.Done()
+
+	return covers
 }
 
 func getPages(

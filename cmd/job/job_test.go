@@ -305,3 +305,59 @@ func TestSeriesCoverBecomesTheCoverOfEveryVolume(t *testing.T) {
 		t.Errorf("got %d covers without an address, want none", len(list))
 	}
 }
+
+func TestCoverPageReplacesTheCoversOfMatchingVolumes(t *testing.T) {
+	srv := newSite(t)
+	// A second server plays the shop with a page of volume cards; its volume 2 matches.
+	shopImage := new(bytes.Buffer)
+	if err := png.Encode(shopImage, image.NewGray(image.Rect(0, 0, 8, 12))); err != nil {
+		t.Fatal(err)
+	}
+	var shop *httptest.Server
+	shop = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/series/x":
+			var b strings.Builder
+			for i := 1; i <= 4; i++ {
+				b.WriteString(`<div><a href="/volume/V` + string(rune('0'+i)) + `/x-vol-` + string(rune('0'+i)) + `"><img srcset="/c/` + string(rune('0'+i)) + `.png 480w"></a></div>`)
+			}
+			_, _ = w.Write([]byte(b.String()))
+		case strings.HasPrefix(r.URL.Path, "/c/"):
+			_, _ = w.Write(shopImage.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(shop.Close)
+
+	opts := siteOptions(srv) // volumes 1 and 2
+	opts.CoverPage = shop.URL + "/series/x"
+	src := newContentSource(opts)
+	manga, err := inspect(context.Background(), src, opts, NopReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	covers, err := getCovers(context.Background(), src, opts, NopReporter{}, manga)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(covers) != 2 {
+		t.Fatalf("got %d covers, want one for each of the 2 volumes (the shop's volumes 3 and 4 do not exist here)", len(covers))
+	}
+	for _, c := range covers {
+		if b := c.Image.Bounds(); b.Dx() != 8 || b.Dy() != 12 {
+			t.Errorf("cover of volume %v is %v, not the shop's picture", c.VolumeIdentifier, b)
+		}
+	}
+
+	// An unreadable page must not stop the download: no covers, no error.
+	opts.CoverPage = shop.URL + "/nothing"
+	if covers, err := getCovers(context.Background(), src, opts, NopReporter{}, manga); err != nil || len(covers) != 0 {
+		t.Errorf("broken cover page: %d covers, %v", len(covers), err)
+	}
+
+	opts.CoverPage = "ftp://example.org/x"
+	if _, err := Inspect(context.Background(), opts, NopReporter{}); err == nil {
+		t.Error("a cover page that is no http(s) address must be rejected")
+	}
+}

@@ -147,3 +147,16 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.Copy(w, io.LimitReader(resp.Body, maxCoverBytes))
 }
+
+// handleCoversPreview lists the volume covers a series page shows, so that the
+// person can check them before using the page for downloads.
+func (s *Server) handleCoversPreview(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	covers, err := selector.FindVolumeCovers(ctx, r.URL.Query().Get("url"), nil)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"covers": covers})
+}
