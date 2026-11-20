@@ -1073,6 +1073,19 @@ async function libraryPage() {
   ];
   const noteVi = (n) => { for (const [re, f] of NOTE_VI) { const m = re.exec(n); if (m) return f(m); } return n; };
 
+  // The same choice, available before anything was run: paste a link and update this series.
+  function inlineChooser(series) {
+    const message = h("p", { class: "small", style: "margin:.5rem 0 0" });
+    const onResult = (out) => {
+      const text = out.updated > 0 ? `Đã cập nhật bìa cho ${out.updated} tập${out.matched ? ` (MangaDex: ${out.matched})` : ""}.`
+        : "Không cập nhật được tập nào.";
+      message.replaceChildren(text, (out.notes || []).length ? h("ul", { class: "muted", style: "margin:.2rem 0" }, out.notes.map((n) => h("li", null, noteVi(n)))) : null);
+    };
+    return h("details", { class: "panel", style: "margin:.5rem 0 0" },
+      h("summary", null, "Dán link để lấy bìa (MangaDex hoặc trang loạt truyện)"),
+      chooser(series, {}, onResult), message);
+  }
+
   function resultRow(series, res) {
     const label = { updated: "Đã cập nhật", partial: "Cập nhật một phần", nothing: "Không có gì để cập nhật", unmatched: "Chưa rõ truyện", failed: "Lỗi" }[res.status] || res.status;
     const row = h("details", { class: "volume", open: res.status === "unmatched" || res.status === "partial" },
@@ -1080,18 +1093,18 @@ async function libraryPage() {
         h("span", { class: "muted small" }, ` · ${label}${res.updated ? `, ${res.updated} tập` : ""}${res.matched ? ` · MangaDex: ${res.matched}` : ""}`)),
       h("div", { style: "padding:.5rem .85rem" },
         (res.notes || []).length ? h("ul", { class: "small muted", style: "margin:.2rem 0" }, res.notes.map((n) => h("li", null, noteVi(n)))) : null,
-        res.status === "unmatched" || res.status === "nothing" ? chooser(series, res, () => row) : null));
+        res.status === "unmatched" || res.status === "nothing" ? chooser(series, res, (out) => { row.replaceWith(resultRow(series, out)); }) : null));
     return row;
   }
 
   // Lets the person tell which MangaDex series (or cover page) a library series is.
-  function chooser(series, res, rowOf) {
+  function chooser(series, res, onResult) {
     const link = h("input", { type: "text", placeholder: "Dán link MangaDex của truyện này", "aria-label": "Link MangaDex" });
     const page = h("input", { type: "url", placeholder: "hoặc trang loạt truyện có bìa, vd bookwalker.com/series/…", "aria-label": "Trang bìa" });
     const go = async (body) => {
       try {
         const out = await api("/api/library/covers", { method: "POST", timeout: 700000, body: Object.assign({ series: series.name }, body) });
-        rowOf().replaceWith(resultRow(series, out));
+        onResult(out);
         if (out.updated > 0) refreshCovers();
       } catch (err) { toast(err.message, { bad: true }); }
     };
@@ -1118,6 +1131,7 @@ async function libraryPage() {
           h("h2", { style: "margin:0" }, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập)`)),
           series.files.some((f) => f.format === "cbz")
             ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null),
+        series.files.some((f) => f.format === "cbz") ? inlineChooser(series) : null,
         series.files.map((f) => h("div", { class: "file" },
           thumb(series.name, f, "lib-thumb"),
           h("span", { class: "name" }, f.name),

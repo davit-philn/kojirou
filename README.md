@@ -222,6 +222,7 @@ kojirou https://example.org/series/my-series -l vi --source-config source.json -
 
 In **Thư viện**, **Cập nhật ảnh bìa cho tất cả** (or **Cập nhật bìa** on one series) gives the CBZ files already in the library their proper cover, without downloading the chapters again.
 For each series folder it finds the MangaDex series by name (only when a search result's title equals the folder name; otherwise it lists the candidates, and you can pick one, paste a MangaDex link, or paste a cover page such as a BookWalker series page), downloads the cover of every volume whose number is in the file name (`0001.cbz` is volume 1) and rewrites the archive: the cover becomes the first page, marked as the front cover in `ComicInfo.xml`, an existing front cover is replaced, all other pages stay as they are, and a missing series name, volume and title are filled in.
+Every series also has a folded panel, **Dán link để lấy bìa**, to paste a MangaDex link or a cover page straight away without running the search first.
 The chosen MangaDex series or cover page is remembered in `library.json` next to `sources.json`. Files written in the last 20 seconds are skipped. Only CBZ files are changed.
 
 ## Volume covers from another page
