@@ -113,6 +113,17 @@ func (p *Provider) volumeFor(ch formats.Chapter, id md.Identifier, position int)
 	}
 }
 
+// SeriesCover downloads one cover image of the series, e.g. the one a
+// catalogue shows, with the source's Referer.
+func (p *Provider) SeriesCover(ctx context.Context, coverURL string) (image.Image, error) {
+	referer := p.cfg.Referer
+	if referer == "" {
+		referer = strings.TrimRight(p.cfg.BaseURL, "/") + "/"
+	}
+
+	return p.download(ctx, coverURL, referer)
+}
+
 // Covers returns no covers: a generic selector source has no notion of them.
 func (p *Provider) Covers(context.Context, *md.Manga, formats.Progress) (md.ImageList, error) {
 	return md.ImageList{}, nil

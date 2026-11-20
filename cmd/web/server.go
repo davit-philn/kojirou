@@ -473,6 +473,18 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dto)
 }
 
+// knownCover returns the cover address to use for a download, or "": only for
+// a series of a custom source without MangaDex covers, and only an address that
+// a browse result contained, so a request cannot make the server fetch
+// arbitrary addresses.
+func (s *Server) knownCover(cfg *selector.SourceConfig, volumesFrom, cover string) string {
+	if cfg == nil || volumesFrom != "" || cover == "" || !s.covers.has(cover) {
+		return ""
+	}
+
+	return cover
+}
+
 // withTitle names a series of a custom source after what the catalogue called
 // it, instead of the last part of its address.
 func withTitle(cfg *selector.SourceConfig, title string) {
@@ -547,14 +559,17 @@ type downloadRequest struct {
 	ChapterIDs  []string     `json:"chapterIds"`
 	// VolumeOverrides maps chapter IDs to a volume chosen by hand.
 	VolumeOverrides map[string]string `json:"volumeOverrides"`
-	Format          string            `json:"format"`
-	RightToLeft     *bool             `json:"rightToLeft"`
-	Autocrop        bool              `json:"autocrop"`
-	Widepage        string            `json:"widepage"`
-	DataSaver       string            `json:"dataSaver"`
-	JPEGQuality     int               `json:"jpegQuality"`
-	Lossless        bool              `json:"lossless"`
-	Force           bool              `json:"force"`
+	// CoverURL is the series cover the catalogue showed; it is used as the
+	// cover of every volume of a series from your own source.
+	CoverURL    string `json:"coverUrl"`
+	Format      string `json:"format"`
+	RightToLeft *bool  `json:"rightToLeft"`
+	Autocrop    bool   `json:"autocrop"`
+	Widepage    string `json:"widepage"`
+	DataSaver   string `json:"dataSaver"`
+	JPEGQuality int    `json:"jpegQuality"`
+	Lossless    bool   `json:"lossless"`
+	Force       bool   `json:"force"`
 }
 
 var (
@@ -681,6 +696,7 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		Rank:            "most",
 		ChapterIDs:      req.ChapterIDs,
 		VolumeOverrides: req.VolumeOverrides,
+		CoverURL:        s.knownCover(cfg, volumesFrom, req.CoverURL),
 		Force:           req.Force,
 		Format:          format,
 		Autocrop:        req.Autocrop,

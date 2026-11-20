@@ -1031,3 +1031,40 @@ func TestSeriesOfACustomSourceIsNamedAfterTheCatalogue(t *testing.T) {
 		t.Errorf("without a title the source's own title is used, got %q", plain.Title)
 	}
 }
+
+func TestDownloadUsesOnlyCoversThatBrowseReturned(t *testing.T) {
+	site := catalogueSite(t)
+	got := make(chan job.Options, 4)
+	e := newEnv(t, func(c *Config) {
+		c.Runner = func(ctx context.Context, opts job.Options, rep job.Reporter) (*job.Result, error) {
+			got <- opts
+			return &job.Result{}, nil
+		}
+	})
+	cfg, _ := json.Marshal(map[string]any{
+		"base_url": site.URL, "referer": site.URL + "/", "chapter_list_selector": "a", "image_list_selector": "img",
+		"list_url": "/list", "series_selector": ".card a",
+	})
+	if rec := e.do("POST", "/api/sources", map[string]any{"name": "shop", "config": json.RawMessage(cfg)}); rec.Code != 200 {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body)
+	}
+	browsed := decode[browseResponse](t, e.do("GET", "/api/browse?source=shop", nil))
+	cover := browsed.Items[0].CoverURL
+	start := func(cover string) job.Options {
+		rec := e.do("POST", "/api/downloads", map[string]any{
+			"source": "shop", "id": site.URL + "/truyen/series-1", "chapterIds": []string{"x"}, "coverUrl": cover,
+		})
+		if rec.Code != 202 {
+			t.Fatalf("start: %d %s", rec.Code, rec.Body)
+		}
+
+		return <-got
+	}
+
+	if opts := start(cover); opts.CoverURL != cover {
+		t.Errorf("CoverURL = %q, want the address browse returned", opts.CoverURL)
+	}
+	if opts := start("http://127.0.0.1:1/secret.png"); opts.CoverURL != "" {
+		t.Errorf("CoverURL = %q: an address no browse result contained must be ignored", opts.CoverURL)
+	}
+}

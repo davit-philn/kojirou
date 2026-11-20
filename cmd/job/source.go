@@ -23,7 +23,7 @@ type contentSource interface {
 func newContentSource(opts Options) contentSource {
 	lang := language.Make(opts.Language)
 	if opts.Source != nil {
-		site := selectorSource{selector.NewProvider(*opts.Source, lang)}
+		site := selectorSource{Provider: selector.NewProvider(*opts.Source, lang), coverURL: opts.CoverURL}
 		if opts.VolumesFrom != "" {
 			dex := mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
 			src := newVolumeMapSource(site, dex, dex, opts.Identifier, opts.VolumesFrom, lang)
@@ -39,7 +39,7 @@ func newContentSource(opts Options) contentSource {
 
 	main := mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
 	if opts.Fill != nil {
-		extra := selectorSource{selector.NewProvider(opts.Fill.Config, lang)}
+		extra := selectorSource{Provider: selector.NewProvider(opts.Fill.Config, lang)}
 		return newFillSource(main, extra, opts.Fill.URL, lang)
 	}
 
@@ -84,6 +84,30 @@ func (s mangadexSource) Pages(ctx context.Context, chapters md.ChapterList, p fo
 
 type selectorSource struct {
 	*selector.Provider
+	// coverURL is a cover image of the whole series, used for every volume
+	// when the source itself has no covers.
+	coverURL string
+}
+
+// Covers gives every volume the series cover. A cover that cannot be fetched
+// is skipped: the chapters matter more than the picture.
+func (s selectorSource) Covers(ctx context.Context, manga *md.Manga, _ formats.Progress) (md.ImageList, error) {
+	if s.coverURL == "" {
+		return md.ImageList{}, nil
+	}
+	img, err := s.Provider.SeriesCover(ctx, s.coverURL)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return md.ImageList{}, nil
+	}
+	covers := make(md.ImageList, 0, len(manga.Volumes))
+	for id := range manga.Volumes {
+		covers = append(covers, md.Image{Image: img, VolumeIdentifier: id})
+	}
+
+	return covers, nil
 }
 
 func (selectorSource) Name() string { return "selector" }

@@ -35,6 +35,9 @@ type Options struct {
 	// stays the main source for volumes and covers. Not combinable with Source.
 	Fill *FillSource
 
+	// CoverURL is a cover image of a series from Source; every volume gets it
+	// as its cover. Ignored when VolumesFrom supplies the covers.
+	CoverURL string
 	// VolumesFrom is a MangaDex series ID. With Source set, the chapters
 	// come from the website while MangaDex decides the volumes and supplies
 	// the series' metadata and covers.

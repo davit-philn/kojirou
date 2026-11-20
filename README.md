@@ -272,7 +272,7 @@ Chapters taken from a second site with `--fill-config` ignore these rules: they 
 Pages are downloaded a few at a time and retried with backoff on HTTP 429 and 5xx responses.
 To try it without a real website, run `python3 contrib/selector_demo.py` and follow the command it prints.
 If a selector finds nothing, the error says what the page contained (its title, how many links and images it has, which attributes the matched elements carry) and whether it looks like a browser-check page, which this tool cannot pass.
-Only plain HTML is read, so sites that load images with JavaScript are not supported, and there are no covers.
+Only plain HTML is read, so sites that load images with JavaScript are not supported. A source has no covers of its own: a series opened from the browse grid uses the cover shown there for every volume, and with volumes taken from MangaDex the covers are MangaDex's, one per volume.
 `--data-saver` has no effect on custom sources.
 
 ## Prebuilt binaries

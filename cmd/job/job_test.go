@@ -266,3 +266,42 @@ func TestVolumeOverridesMoveChaptersByHand(t *testing.T) {
 		t.Error("a volume that is no number must be rejected")
 	}
 }
+
+func TestSeriesCoverBecomesTheCoverOfEveryVolume(t *testing.T) {
+	srv := newSite(t)
+	opts := siteOptions(srv) // chapters 1 and 2 in volume 1, chapter 3 in volume 2
+	opts.CoverURL = srv.URL + "/i/cover.png"
+
+	covers := func(opts Options) (md.ImageList, *md.Manga) {
+		src := newContentSource(opts)
+		manga, err := inspect(context.Background(), src, opts, NopReporter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		list, err := getCovers(context.Background(), src, opts, NopReporter{}, manga)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return list, manga
+	}
+	list, manga := covers(opts)
+	if len(list) != 2 || len(manga.Volumes) != 2 {
+		t.Fatalf("got %d covers for %d volumes, want one per volume", len(list), len(manga.Volumes))
+	}
+	for _, c := range list {
+		if c.Image == nil {
+			t.Error("a cover has no image")
+		}
+	}
+
+	// A cover that cannot be fetched must not stop the download.
+	opts.CoverURL = srv.URL + "/missing.png"
+	if list, _ := covers(opts); len(list) != 0 {
+		t.Errorf("got %d covers from a broken address, want none", len(list))
+	}
+	opts.CoverURL = ""
+	if list, _ := covers(opts); len(list) != 0 {
+		t.Errorf("got %d covers without an address, want none", len(list))
+	}
+}

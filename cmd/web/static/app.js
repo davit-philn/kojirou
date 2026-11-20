@@ -258,6 +258,7 @@ async function browsePage() {
   function seriesCard(source, item) {
     const p = new URLSearchParams({ source, id: item.url, lang: state.lang });
     if (item.title) p.set("title", item.title);
+    if (item.coverUrl) p.set("cover", item.coverUrl);
     return h("a", { class: "card", href: "#/series?" + p },
       item.coverUrl
         ? h("img", { class: "cover", src: "/api/cover?" + new URLSearchParams({ source, url: item.coverUrl }), alt: "", loading: "lazy" })
@@ -428,8 +429,8 @@ async function seriesPage(params) {
     head.replaceChildren(...nodes(
       h("p", null, h("a", { href: "#/" }, "← Quay lại")),
       h("div", { class: "series-head" },
-        series.coverUrl
-          ? h("img", { class: "cover", src: series.coverUrl.replace(".256.jpg", ".512.jpg"), alt: "", referrerpolicy: "no-referrer" })
+        series.coverUrl || (source !== "mangadex" && params.get("cover"))
+          ? h("img", { class: "cover", src: series.coverUrl ? series.coverUrl.replace(".256.jpg", ".512.jpg") : "/api/cover?" + new URLSearchParams({ source, url: params.get("cover") }), alt: "", referrerpolicy: "no-referrer" })
           : h("div", { class: "cover none" }, "Không có bìa"),
         h("div", null,
           h("h1", null, series.title),
@@ -849,6 +850,7 @@ async function seriesPage(params) {
         fill: fillActive() ? { source: fill.source, url: fill.url } : undefined,
         volumesFrom: volumesFrom || undefined,
         volumeOverrides: chosenOverrides(),
+        coverUrl: source !== "mangadex" && !volumesFrom ? (params.get("cover") || undefined) : undefined,
       } });
       toast(`Đã thêm “${series.title}” vào hàng đợi.`, { link: { href: "#/downloads", text: "Xem tiến độ" } });
       pollBadge();
