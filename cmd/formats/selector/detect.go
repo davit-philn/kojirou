@@ -357,9 +357,12 @@ func seriesLinks(page *url.URL, doc *goquery.Document) []string {
 			out = append(out, u)
 		}
 	}
-	if _, items, ok := findSeriesCards(page, doc); ok {
-		for _, item := range items {
-			add(item.URL)
+	for _, g := range rankSeriesGroups(page, doc) {
+		for _, u := range g.urls {
+			add(u)
+		}
+		if len(out) >= 2*maxSeriesToTry {
+			break
 		}
 	}
 	for _, u := range seriesCandidates(page, doc) {
@@ -451,7 +454,7 @@ func seriesCandidates(page *url.URL, doc *goquery.Document) []string {
 	groups := map[string][]string{}
 	seen := map[string]bool{}
 	for _, l := range pageLinks(page, doc) {
-		if depth(l.path) < 2 || chapterLink(l.text, l.title, l.path) || seen[l.url] {
+		if depth(l.path) < 2 || isSection(l.path) || chapterLink(l.text, l.title, l.path) || seen[l.url] {
 			continue
 		}
 		seen[l.url] = true
@@ -725,29 +728,49 @@ func hasCover(n *html.Node) bool {
 	return false
 }
 
-// findSeriesCards finds the group of links that look like series on a
-// listing page: many different addresses, not chapters, ideally with covers.
-func findSeriesCards(page *url.URL, doc *goquery.Document) (string, []SeriesItem, bool) {
+// sectionNames are first path segments of pages that list genres, accounts and
+// the like rather than series.
+var sectionNames = regexp.MustCompile(`(?i)^(the-?loai|genres?|tags?|categor(y|ies)|danh-?muc|xep-?hang|ranking|top|tim-?kiem|search|login|logout|register|signup|dang-?(nhap|ky)|lich-?su|history|theo-?doi|follow|bookmarks?|users?|account|tai-?khoan|profile|lien-?he|contact|gioi-?thieu|about|huong-?dan|help|faq|dieu-?khoan|terms|privacy|rules?|page|feed|rss|sitemap)$`)
+
+func isSection(path string) bool {
+	segs := strings.Split(strings.Trim(path, "/"), "/")
+
+	return len(segs) > 0 && sectionNames.MatchString(segs[0])
+}
+
+type seriesGroup struct {
+	nodes []*html.Node
+	urls  []string
+	score float64
+}
+
+// rankSeriesGroups groups the links of a listing page that look like series
+// (many different addresses of one shape, not chapters, not sections such as
+// genres) and ranks the groups: more addresses and covers score higher.
+func rankSeriesGroups(page *url.URL, doc *goquery.Document) []*seriesGroup {
 	type group struct {
-		nodes    []*html.Node
-		urls     map[string]bool
+		seriesGroup
+		seen     map[string]bool
 		covers   int
 		withText int
 	}
 	groups := map[string]*group{}
 	for _, l := range pageLinks(page, doc) {
-		if depth(l.path) < 1 || chapterLink(l.text, l.title, l.path) {
+		if depth(l.path) < 1 || isSection(l.path) || chapterLink(l.text, l.title, l.path) {
 			continue
 		}
 		segs := strings.Split(strings.Trim(l.path, "/"), "/")
 		key := fmt.Sprint(len(segs)) + "|" + hrefShape(segs[0]) + "|" + parentSignature(l.node)
 		g := groups[key]
 		if g == nil {
-			g = &group{urls: map[string]bool{}}
+			g = &group{seen: map[string]bool{}}
 			groups[key] = g
 		}
 		g.nodes = append(g.nodes, l.node)
-		g.urls[l.url] = true
+		if !g.seen[l.url] {
+			g.seen[l.url] = true
+			g.urls = append(g.urls, l.url)
+		}
 		if hasCover(l.node) {
 			g.covers++
 		}
@@ -756,24 +779,37 @@ func findSeriesCards(page *url.URL, doc *goquery.Document) (string, []SeriesItem
 		}
 	}
 
-	type scored struct {
-		g     *group
-		score float64
-	}
-	var ranked []scored
+	var ranked []*seriesGroup
 	for _, g := range groups {
 		if len(g.urls) < minChapterLinks {
 			continue
 		}
 		n := float64(len(g.nodes))
-		ranked = append(ranked, scored{g, float64(len(g.urls)) * (0.5 + float64(g.covers)/n) * (1 + 0.1*float64(g.withText)/n)})
+		// Links with covers are series cards; a long menu of plain text links
+		// (genres, tags) must never outrank them, however long it is.
+		g.score = float64(len(g.urls)) * (1 + 0.1*float64(g.withText)/n)
+		if float64(g.covers)/n >= 0.5 {
+			g.score += 1e6
+		}
+		ranked = append(ranked, &g.seriesGroup)
 	}
-	sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].urls[0] < ranked[j].urls[0]
+	})
 
+	return ranked
+}
+
+// findSeriesCards finds the group of links that look like series on a
+// listing page: many different addresses, not chapters, ideally with covers.
+func findSeriesCards(page *url.URL, doc *goquery.Document) (string, []SeriesItem, bool) {
 	// A card often holds two links to the same series (cover and title).
 	// Take the best group that a reliable selector can be built for.
-	for _, r := range ranked {
-		selector, ok := synthesize(doc, r.g.nodes)
+	for _, g := range rankSeriesGroups(page, doc) {
+		selector, ok := synthesize(doc, g.nodes)
 		if !ok {
 			continue
 		}

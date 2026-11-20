@@ -606,3 +606,45 @@ func TestDetectFailureDescribesTheLinksWhenNoSeriesLooksLikeOne(t *testing.T) {
 		}
 	}
 }
+
+// A long genre menu must not be mistaken for the list of series: its links
+// outnumber the cards, but the cards have covers and the menu does not.
+func TestSeriesLinksPreferCardsOverAMenuOfGenres(t *testing.T) {
+	var home strings.Builder
+	home.WriteString(`<html><body><ul class="menu">`)
+	for i := 1; i <= 40; i++ {
+		fmt.Fprintf(&home, `<li><a href="/chu-de/g%d">Chủ đề %d</a></li>`, i, i)
+	}
+	home.WriteString(`</ul><div class="grid">`)
+	for i := 1; i <= 6; i++ {
+		fmt.Fprintf(&home, `<div class="item"><a href="/truyen-tranh/series-%d"><img src="/c/%d.jpg"></a></div>`, i, i)
+	}
+	home.WriteString(`</div></body></html>`)
+	s := newSite(t, map[string]string{"/": home.String()})
+	page, doc, err := fetchDocument(context.Background(), NewClient(SourceConfig{}), s.srv.URL+"/", SourceConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	links := seriesLinks(page, doc)
+	if len(links) < 4 || !strings.Contains(links[0], "/truyen-tranh/series-") || !strings.Contains(links[3], "/truyen-tranh/series-") {
+		t.Errorf("series links = %v, want the cards first", links)
+	}
+}
+
+func TestGenreSectionsAreNotSeries(t *testing.T) {
+	var home strings.Builder
+	home.WriteString(`<html><body><ul class="menu">`)
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&home, `<li><a href="/the-loai/g%d"><img src="/i/%d.png">Thể loại %d</a></li>`, i, i, i)
+	}
+	home.WriteString(`</ul></body></html>`)
+	s := newSite(t, map[string]string{"/": home.String()})
+	page, doc, err := fetchDocument(context.Background(), NewClient(SourceConfig{}), s.srv.URL+"/", SourceConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if links := seriesLinks(page, doc); len(links) != 0 {
+		t.Errorf("series links = %v, want none: genre pages are not series", links)
+	}
+}
