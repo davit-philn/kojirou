@@ -118,6 +118,9 @@ func Run(ctx context.Context, opts Options, rep Reporter) (*Result, error) {
 		result.Notes = append(result.Notes, fmt.Sprintf("covers from MangaDex could not be downloaded (%v); the volumes have no cover", err))
 		covers = nil
 	}
+	if pr, ok := src.(interface{ CoverProblem() string }); ok && pr.CoverProblem() != "" {
+		result.Notes = append(result.Notes, pr.CoverProblem())
+	}
 	*manga = manga.WithCovers(covers)
 
 	out := outputDirectory(opts, manga.Info.Title)
@@ -266,10 +269,14 @@ func getCovers(
 	p := rep.Task("Covers", true)
 	covers, err := src.Covers(ctx, manga, p)
 	if err != nil {
-		p.Cancel("Error")
+		p.Cancel(shortMessage(err.Error()))
 		return nil, fmt.Errorf("%v: %w", src.Name(), err)
 	}
-	p.Done()
+	if pr, ok := src.(interface{ CoverProblem() string }); ok && pr.CoverProblem() != "" {
+		p.Cancel(shortMessage(pr.CoverProblem()))
+	} else {
+		p.Done()
+	}
 
 	if opts.CoverPage != "" {
 		covers = append(covers, coversFromPage(ctx, opts.CoverPage, manga, rep)...)
@@ -292,13 +299,22 @@ func getCovers(
 	return covers, nil
 }
 
+// shortMessage fits a reason into the one line a progress step has.
+func shortMessage(s string) string {
+	if r := []rune(s); len(r) > 120 {
+		return string(r[:120]) + "…"
+	}
+
+	return s
+}
+
 // coversFromPage takes the covers of the volumes a series page shows. It never
 // fails the job: whatever cannot be read leaves the other covers in place.
 func coversFromPage(ctx context.Context, pageURL string, manga *md.Manga, rep Reporter) md.ImageList {
 	p := rep.Task("Covers from the cover page", true)
 	found, err := selector.FindVolumeCovers(ctx, pageURL, nil)
 	if err != nil {
-		p.Cancel(err.Error())
+		p.Cancel(shortMessage(err.Error()))
 		return nil
 	}
 

@@ -852,7 +852,13 @@ async function seriesPage(params) {
     const infoBox = (series.info || []).length
       ? h("p", { class: "muted small", style: "margin-top:.75rem" }, series.info.map(describeInfo).join(" "))
       : null;
-    chaptersBox.replaceChildren(...nodes(manualPanel(manualOpen), toolbar, infoBox, noteBox, list));
+    // Without a cover source the first page of chapter 1 becomes the cover in library programs.
+    const hasCoverSource = source === "mangadex" || volumesFrom || params.get("cover") || store.get("coverPage", {})[source + "|" + id];
+    const coverHint = hasCoverSource ? null
+      : h("div", { class: "notice", style: "margin-top:1rem" },
+          h("strong", null, "Chưa có bìa: "),
+          "file tải về sẽ không có ảnh bìa riêng (app đọc truyện lấy trang đầu của chương 1 làm bìa). Để có bìa: mở truyện bằng cách bấm thẻ truyện trong lưới Duyệt truyện, hoặc dùng “Chia tập theo MangaDex” (bìa từng tập), hoặc dán trang loạt truyện ở mục “Bìa từng tập từ trang khác”.");
+    chaptersBox.replaceChildren(...nodes(manualPanel(manualOpen), toolbar, infoBox, coverHint, noteBox, list));
     refresh();
   }
 

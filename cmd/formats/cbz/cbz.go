@@ -155,9 +155,12 @@ type comicPage struct {
 }
 
 type comicBookInfo struct {
-	XMLName     xml.Name `xml:"ComicInfo"`
+	XMLName xml.Name `xml:"ComicInfo"`
+	// Title is shown by library programs such as Calibre instead of the file name.
+	Title       string `xml:",omitempty"`
 	Series      string
 	Number      string `xml:",omitempty"`
+	Volume      string `xml:",omitempty"`
 	Writer      string `xml:",omitempty"`
 	Penciller   string `xml:",omitempty"`
 	LanguageISO string `xml:",omitempty"`
@@ -184,6 +187,11 @@ func comicInfo(manga md.Manga, pages []comicPage, rtl bool) comicBookInfo {
 		keys = append(keys, key.String())
 	}
 	info.Number = strings.Join(keys, ", ")
+	// A file holds one volume: name it after the series and the volume.
+	if len(keys) == 1 {
+		info.Volume = keys[0]
+		info.Title = manga.Info.Title + " - Vol. " + keys[0]
+	}
 
 	if chapters := manga.Chapters(); len(chapters) > 0 {
 		if tag, _ := chapters[0].Info.Language.Base(); tag.String() != "und" {

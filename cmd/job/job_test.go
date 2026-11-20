@@ -6,6 +6,7 @@ import (
 	"context"
 	"image"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -300,6 +301,21 @@ func TestSeriesCoverBecomesTheCoverOfEveryVolume(t *testing.T) {
 	if list, _ := covers(opts); len(list) != 0 {
 		t.Errorf("got %d covers from a broken address, want none", len(list))
 	}
+	broken := newContentSource(opts)
+	brokenManga, err := inspect(context.Background(), broken, opts, NopReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps recordedSteps
+	if _, err := getCovers(context.Background(), broken, opts, &steps, brokenManga); err != nil {
+		t.Fatal(err)
+	}
+	if problem := broken.(interface{ CoverProblem() string }).CoverProblem(); !strings.Contains(problem, "series cover could not be downloaded") {
+		t.Errorf("problem = %q, want the reason the cover is missing", problem)
+	}
+	if got := steps.cancelled["Covers"]; !strings.Contains(got, "series cover could not be downloaded") {
+		t.Errorf("the Covers step ended with %q, want it to say why there is no cover", got)
+	}
 	opts.CoverURL = ""
 	if list, _ := covers(opts); len(list) != 0 {
 		t.Errorf("got %d covers without an address, want none", len(list))
@@ -360,4 +376,30 @@ func TestCoverPageReplacesTheCoversOfMatchingVolumes(t *testing.T) {
 	if _, err := Inspect(context.Background(), opts, NopReporter{}); err == nil {
 		t.Error("a cover page that is no http(s) address must be rejected")
 	}
+}
+
+// recordedSteps is a Reporter that remembers how each step was cancelled.
+type recordedSteps struct{ cancelled map[string]string }
+
+type recordedStep struct {
+	steps *recordedSteps
+	title string
+}
+
+func (r *recordedSteps) Summary(*md.Manga) {}
+func (r *recordedSteps) Task(title string, _ bool) Progress {
+	return recordedStep{r, title}
+}
+
+func (s recordedStep) Increase(int) {}
+func (s recordedStep) Add(int)      {}
+func (s recordedStep) NewProxyWriter(w io.Writer) io.Writer {
+	return w
+}
+func (s recordedStep) Done() {}
+func (s recordedStep) Cancel(message string) {
+	if s.steps.cancelled == nil {
+		s.steps.cancelled = map[string]string{}
+	}
+	s.steps.cancelled[s.title] = message
 }

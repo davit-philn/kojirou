@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/leotaku/kojirou/cmd/formats"
 	"github.com/leotaku/kojirou/cmd/formats/download"
@@ -23,7 +24,7 @@ type contentSource interface {
 func newContentSource(opts Options) contentSource {
 	lang := language.Make(opts.Language)
 	if opts.Source != nil {
-		site := selectorSource{Provider: selector.NewProvider(*opts.Source, lang), coverURL: opts.CoverURL}
+		site := selectorSource{Provider: selector.NewProvider(*opts.Source, lang), coverURL: opts.CoverURL, problem: new(string)}
 		if opts.VolumesFrom != "" {
 			dex := mangadexSource{dataSaver: opts.DataSaver, interactive: opts.Interactive}
 			src := newVolumeMapSource(site, dex, dex, opts.Identifier, opts.VolumesFrom, lang)
@@ -87,6 +88,17 @@ type selectorSource struct {
 	// coverURL is a cover image of the whole series, used for every volume
 	// when the source itself has no covers.
 	coverURL string
+	// problem remembers why the series cover could not be fetched.
+	problem *string
+}
+
+// CoverProblem says why the series cover could not be used, or "".
+func (s selectorSource) CoverProblem() string {
+	if s.problem == nil {
+		return ""
+	}
+
+	return *s.problem
 }
 
 // Covers gives every volume the series cover. A cover that cannot be fetched
@@ -99,6 +111,9 @@ func (s selectorSource) Covers(ctx context.Context, manga *md.Manga, _ formats.P
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if s.problem != nil {
+			*s.problem = fmt.Sprintf("the series cover could not be downloaded (%v)", err)
 		}
 		return md.ImageList{}, nil
 	}

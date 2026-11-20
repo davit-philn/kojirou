@@ -80,6 +80,9 @@ func TestGenerate(t *testing.T) {
 	if info.Series != "Test Series" || info.Number != "1" || info.PageCount != 3 {
 		t.Errorf("unexpected ComicInfo: %+v", info)
 	}
+	if info.Title != "Test Series - Vol. 1" || info.Volume != "1" {
+		t.Errorf("title %q volume %q: library programs show the title instead of the file name 0001", info.Title, info.Volume)
+	}
 	if info.Manga != "YesAndRightToLeft" || info.LanguageISO != "en" {
 		t.Errorf("unexpected reading direction or language: %+v", info)
 	}
