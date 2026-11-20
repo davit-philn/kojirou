@@ -179,7 +179,26 @@ func cardTitle(card, anchor *goquery.Selection) string {
 			return title
 		}
 	}
-	// The name may sit next to the link, in the card around it.
+	// The name may sit next to the link, in the card around it: either a
+	// second link to the same address, or the card's only heading.
+	if href, ok := anchor.Attr("href"); ok {
+		for _, ancestor := range ancestors(card, 2) {
+			var found string
+			ancestor.Find("a[href]").EachWithBreak(func(_ int, other *goquery.Selection) bool {
+				if other.AttrOr("href", "") == href {
+					if title := truncate(strings.Join(strings.Fields(other.Text()), " ")); title != "" {
+						found = title
+						return false
+					}
+				}
+
+				return true
+			})
+			if found != "" {
+				return found
+			}
+		}
+	}
 	for _, ancestor := range ancestors(card, 2) {
 		if headings := ancestor.Find("h1,h2,h3,h4,h5,h6"); headings.Length() == 1 {
 			if title := truncate(strings.Join(strings.Fields(headings.Text()), " ")); title != "" {

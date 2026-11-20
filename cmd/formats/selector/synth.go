@@ -77,28 +77,37 @@ func synthesize(doc *goquery.Document, targets []*html.Node) (string, bool) {
 	}
 
 	best, bestScore := "", 0.0
+	imgInside := allContainImg(targets)
 	for depth := 0; depth <= 4; depth++ {
 		candidate, ok := candidateSelector(targets, depth)
 		if !ok {
 			break
 		}
-		sel, err := cascadia.Compile(candidate)
-		if err != nil {
-			continue
+		variants := []string{candidate}
+		if imgInside {
+			// Links that wrap a picture can be told apart from the text links
+			// next to them (a card's title or chapter links).
+			variants = append(variants, candidate+":has(img)")
 		}
-		got := doc.FindMatcher(sel).Nodes
-		hit := 0
-		for _, n := range got {
-			if want[n] {
-				hit++
+		for _, variant := range variants {
+			sel, err := cascadia.Compile(variant)
+			if err != nil {
+				continue
 			}
-		}
-		if hit == len(targets) && len(got) == len(targets) {
-			return candidate, true
-		}
-		if hit == len(targets) {
-			if score := float64(len(targets)) / float64(len(got)); score > bestScore {
-				best, bestScore = candidate, score
+			got := doc.FindMatcher(sel).Nodes
+			hit := 0
+			for _, n := range got {
+				if want[n] {
+					hit++
+				}
+			}
+			if hit == len(targets) && len(got) == len(targets) {
+				return variant, true
+			}
+			if hit == len(targets) {
+				if score := float64(len(targets)) / float64(len(got)); score > bestScore {
+					best, bestScore = variant, score
+				}
 			}
 		}
 	}
@@ -160,4 +169,15 @@ func commonPart(nodes []*html.Node) (string, bool) {
 	}
 
 	return part, true
+}
+
+// allContainImg reports whether every node has an <img> inside it.
+func allContainImg(nodes []*html.Node) bool {
+	for _, n := range nodes {
+		if goquery.NewDocumentFromNode(n).Find("img").Length() == 0 {
+			return false
+		}
+	}
+
+	return len(nodes) > 0
 }

@@ -286,6 +286,9 @@ func describeLinkGroups(page *url.URL, doc *goquery.Document) string {
 	for _, l := range pageLinks(page, doc) {
 		segs := strings.Split(strings.Trim(l.path, "/"), "/")
 		key := fmt.Sprintf("/%s/… (depth %d)", hrefShape(segs[0]), depth(l.path))
+		if len(segs) == 1 {
+			key = "/<name> (depth 1)"
+		}
 		g := groups[key]
 		if g == nil {
 			g = &group{}
@@ -760,7 +763,13 @@ func rankSeriesGroups(page *url.URL, doc *goquery.Document) []*seriesGroup {
 			continue
 		}
 		segs := strings.Split(strings.Trim(l.path, "/"), "/")
-		key := fmt.Sprint(len(segs)) + "|" + hrefShape(segs[0]) + "|" + parentSignature(l.node)
+		// For a top-level address ("/series-name") the only segment is the
+		// series' own name, which differs for every series.
+		shape := hrefShape(segs[0])
+		if len(segs) == 1 {
+			shape = "*"
+		}
+		key := fmt.Sprint(len(segs)) + "|" + shape + "|" + parentSignature(l.node)
 		g := groups[key]
 		if g == nil {
 			g = &group{seen: map[string]bool{}}
@@ -809,16 +818,30 @@ func findSeriesCards(page *url.URL, doc *goquery.Document) (string, []SeriesItem
 	// A card often holds two links to the same series (cover and title).
 	// Take the best group that a reliable selector can be built for.
 	for _, g := range rankSeriesGroups(page, doc) {
-		selector, ok := synthesize(doc, g.nodes)
-		if !ok {
-			continue
+		// The links of one card that show a cover are tried first: the
+		// title and chapter links beside them lead to the same series or to
+		// chapters and cannot be told apart by structure alone.
+		var covers []*html.Node
+		for _, n := range g.nodes {
+			if goquery.NewDocumentFromNode(n).Find("img").Length() > 0 {
+				covers = append(covers, n)
+			}
 		}
-		sel, err := cascadia.Compile(selector)
-		if err != nil {
-			continue
-		}
-		if items := seriesFromDoc(page, doc, sel); len(items) >= minChapterLinks {
-			return selector, items, true
+		for _, nodes := range [][]*html.Node{covers, g.nodes} {
+			if len(nodes) < minChapterLinks {
+				continue
+			}
+			selector, ok := synthesize(doc, nodes)
+			if !ok {
+				continue
+			}
+			sel, err := cascadia.Compile(selector)
+			if err != nil {
+				continue
+			}
+			if items := seriesFromDoc(page, doc, sel); len(items) >= minChapterLinks {
+				return selector, items, true
+			}
 		}
 	}
 

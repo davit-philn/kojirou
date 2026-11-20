@@ -600,7 +600,7 @@ func TestDetectFailureDescribesTheLinksWhenNoSeriesLooksLikeOne(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	for _, want := range []string{"No link on the start page looked like a series", "Largest groups of links", "links like /about/…"} {
+	for _, want := range []string{"No link on the start page looked like a series", "Largest groups of links", "links like /<name> (depth 1)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
@@ -646,5 +646,50 @@ func TestGenreSectionsAreNotSeries(t *testing.T) {
 	}
 	if links := seriesLinks(page, doc); len(links) != 0 {
 		t.Errorf("series links = %v, want none: genre pages are not series", links)
+	}
+}
+
+// Series addresses without a section ("/series-name") and chapters below them
+// ("/series-name/chap-5"), with a long genre menu on the home page.
+func TestDetectTopLevelSeriesAddressesWithChaptersBelowThem(t *testing.T) {
+	var home strings.Builder
+	home.WriteString(`<html><head><title>Home</title></head><body><ul class="menu">`)
+	for i := 1; i <= 40; i++ {
+		fmt.Fprintf(&home, `<li><a href="/the-loai/g%d">Thể loại %d</a></li>`, i, i)
+	}
+	home.WriteString(`</ul><div class="list">`)
+	names := []string{"con-luan", "cuu-chi-ton", "buon-ban", "than-y", "tuyet-sac", "ma-vuong"}
+	for i, name := range names {
+		fmt.Fprintf(&home, `<div class="card"><a href="/%s"><img src="/c/%d.jpg"></a><a href="/%s">Truyện %d</a>`+
+			`<a href="/%s/chap-%d">Chương %d</a><a href="/%s/chap-%d">Chương %d</a></div>`,
+			name, i, name, i, name, 20, 20, name, 19, 19)
+	}
+	home.WriteString(`</div></body></html>`)
+	var list strings.Builder
+	list.WriteString(`<html><body><h1>Truyện</h1><div class="chapters">`)
+	for i := 12; i >= 1; i-- {
+		fmt.Fprintf(&list, `<div class="chap"><a href="/con-luan/chap-%d">Chương %d</a></div>`, i, i)
+	}
+	list.WriteString(`</div></body></html>`)
+	pages := map[string]string{"/": home.String()}
+	for _, name := range names {
+		pages["/"+name] = list.String()
+	}
+	for i := 1; i <= 12; i++ {
+		pages[fmt.Sprintf("/con-luan/chap-%d", i)] = srcChapterPage
+	}
+	s := newSite(t, pages)
+
+	d, err := detect(t, s.srv.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify(t, d, 12, 4)
+	if !d.Config.Browsable() || d.SeriesCount != 6 {
+		t.Errorf("catalogue: %+v (series %d)", d.Config, d.SeriesCount)
+	}
+	page, err := ListSeries(context.Background(), s.srv.URL+"/", d.Config)
+	if err != nil || len(page.Items) != 6 || !strings.HasSuffix(page.Items[0].URL, "/con-luan") || page.Items[0].CoverURL == "" || page.Items[0].Title != "Truyện 0" {
+		t.Errorf("series = %+v, %v", page, err)
 	}
 }
