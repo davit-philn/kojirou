@@ -4,8 +4,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"image"
+	"image/png"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	md "github.com/leotaku/kojirou/mangadex"
@@ -173,5 +177,105 @@ func TestFilename(t *testing.T) {
 	}
 	if got := filename(md.NewIdentifier("3.5")); got != "0003.05.cbz" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func comicPageNames(t *testing.T, path string) ([]string, comicBookInfo) {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close() //nolint:errcheck
+	var names []string
+	var info comicBookInfo
+	for _, f := range zr.File {
+		if f.Name == "ComicInfo.xml" {
+			rc, _ := f.Open()
+			data, _ := io.ReadAll(rc)
+			rc.Close() //nolint:errcheck
+			if err := xml.Unmarshal(data, &info); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		names = append(names, f.Name)
+	}
+
+	return names, info
+}
+
+func TestSetCoverReplacesAnExistingCoverAndKeepsThePages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "0001.cbz")
+	var buf bytes.Buffer
+	if err := Generate(&buf, testManga(), Options{RightToLeft: true}); err != nil { // cover + 2 pages
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var pic bytes.Buffer
+	if err := png.Encode(&pic, image.NewGray(image.Rect(0, 0, 8, 12))); err != nil {
+		t.Fatal(err)
+	}
+
+	for round := 0; round < 2; round++ { // running it twice must not add a second cover
+		if err := SetCover(path, CoverUpdate{Picture: pic.Bytes(), Ext: ".PNG", Series: "Other", Volume: "9"}); err != nil {
+			t.Fatal(err)
+		}
+		names, info := comicPageNames(t, path)
+		if len(names) != 3 || names[0] != "00000.png" || names[1] != "00001.jpg" || names[2] != "00002.jpg" {
+			t.Fatalf("round %d: entries %v, want the new cover then the 2 pages renumbered", round, names)
+		}
+		if info.PageCount != 3 || len(info.Pages) != 3 || info.Pages[0].Type != "FrontCover" || info.Pages[1].Type != "" {
+			t.Errorf("round %d: pages %+v", round, info.Pages)
+		}
+		if info.Series != "Test Series" || info.Volume != "1" || info.Title != "Test Series - Vol. 1" {
+			t.Errorf("round %d: existing metadata must be kept, got series %q volume %q title %q", round, info.Series, info.Volume, info.Title)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".cover-*")); len(left) != 0 {
+		t.Errorf("temporary files left behind: %v", left)
+	}
+}
+
+func TestSetCoverAddsACoverToAnArchiveWithoutOneAndFillsTheMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "0003.cbz")
+	f, _ := os.Create(path)
+	zw := zip.NewWriter(f)
+	for i := 0; i < 2; i++ {
+		w, _ := zw.Create(fmt.Sprintf("%05d.jpg", i))
+		_, _ = w.Write([]byte(fmt.Sprintf("page%d", i)))
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close() //nolint:errcheck
+
+	if err := SetCover(path, CoverUpdate{Picture: []byte("cover"), Ext: ".jpg", Series: "Blue Lock", Volume: "3"}); err != nil {
+		t.Fatal(err)
+	}
+	names, info := comicPageNames(t, path)
+	if len(names) != 3 || info.PageCount != 3 || info.Pages[0].Type != "FrontCover" {
+		t.Fatalf("entries %v pages %+v", names, info.Pages)
+	}
+	if info.Series != "Blue Lock" || info.Volume != "3" || info.Title != "Blue Lock - Vol. 3" {
+		t.Errorf("metadata not filled in: %+v", info)
+	}
+	// The pages themselves are untouched.
+	zr, _ := zip.OpenReader(path)
+	defer zr.Close() //nolint:errcheck
+	rc, _ := zr.File[1].Open()
+	data, _ := io.ReadAll(rc)
+	rc.Close() //nolint:errcheck
+	if string(data) != "page0" {
+		t.Errorf("first page is %q after the cover, want page0", data)
+	}
+
+	if err := SetCover(path, CoverUpdate{Picture: nil, Ext: ".jpg"}); err == nil {
+		t.Error("an empty cover must be refused")
+	}
+	if err := SetCover(filepath.Join(t.TempDir(), "missing.cbz"), CoverUpdate{Picture: []byte("x"), Ext: ".jpg"}); err == nil {
+		t.Error("a missing archive must be an error")
 	}
 }

@@ -1007,16 +1007,105 @@ badgeTimer = setInterval(() => { if (!document.hidden) pollBadge(); }, 3000);
 
 // ---------- library ----------
 
+// Changes after the covers of the library were updated, so that the browser asks for the new pictures.
+let libraryStamp = "";
+
 async function libraryPage() {
   const [lib, cfg] = await Promise.all([api("/api/library"), api("/api/config")]);
   const refresh = h("button", { class: "btn small", onclick: render }, "Làm mới");
+  const results = h("div", { class: "panel", hidden: true });
+  let stop = null; // set while an update runs: aborts it
+  const updateAll = h("button", { class: "btn primary", onclick: () => runUpdate(lib.filter((x) => x.files.some((f) => f.format === "cbz"))) }, "Cập nhật ảnh bìa cho tất cả");
+  const cancelButton = h("button", { class: "btn danger small", hidden: true, onclick: () => stop && stop() }, "Dừng");
   app.append(h("h1", null, "Thư viện"),
-    h("p", { class: "muted" }, "Thư mục lưu trên máy: ", h("code", null, cfg.library), " ", refresh));
+    h("p", { class: "muted" }, "Thư mục lưu trên máy: ", h("code", null, cfg.library), " ", refresh),
+    h("div", { class: "row", style: "margin-bottom:1rem" }, updateAll, cancelButton,
+      h("span", { class: "muted small" }, "Tìm bìa đúng từng tập trên MangaDex (theo tên truyện) và ghi vào file .cbz, không tải lại truyện.")),
+    results);
   if (lib.length === 0) {
     app.append(h("div", { class: "empty" }, "Thư viện đang trống. Các tập đã tải sẽ hiện ở đây."));
     return;
   }
-  const coverUrl = (series, file) => `/api/library/${encodeURIComponent(series)}/${encodeURIComponent(file)}/cover`;
+  const coverUrl = (series, file) => `/api/library/${encodeURIComponent(series)}/${encodeURIComponent(file)}/cover${libraryStamp ? "?v=" + libraryStamp : ""}`;
+
+  // Updates the covers of the given series one after another and lists what happened.
+  async function runUpdate(list, extra) {
+    if (list.length === 0) { toast("Thư viện chưa có file CBZ nào", { bad: true }); return; }
+    let stopped = false;
+    let controller = null;
+    stop = () => { stopped = true; if (controller) controller.abort(); };
+    updateAll.disabled = true; cancelButton.hidden = false;
+    results.hidden = false;
+    const status = h("p", { class: "muted" });
+    const rows = h("div");
+    results.replaceChildren(h("strong", null, "Cập nhật ảnh bìa"), status, rows);
+    let updated = 0;
+    for (let i = 0; i < list.length && !stopped; i++) {
+      const series = list[i];
+      status.textContent = `Đang xử lý ${i + 1}/${list.length}: ${series.name}… (có thể mất một lúc)`;
+      controller = new AbortController();
+      try {
+        const res = await api("/api/library/covers", { method: "POST", timeout: 700000, signal: controller.signal,
+          body: Object.assign({ series: series.name }, extra && list.length === 1 ? extra : {}) });
+        updated += res.updated;
+        rows.append(resultRow(series, res));
+      } catch (err) {
+        if (err.name === "AbortError") break;
+        rows.append(h("div", { class: "notice" }, `${series.name}: ${err.message}`));
+      }
+    }
+    status.textContent = stopped ? "Đã dừng." : `Xong. Đã ghi bìa mới vào ${updated} tập.`;
+    updateAll.disabled = false; cancelButton.hidden = true; stop = null;
+    if (updated > 0) refreshCovers();
+  }
+
+  // Asks the browser for the pictures again after files were rewritten.
+  function refreshCovers() {
+    libraryStamp = String(Date.now());
+    document.querySelectorAll("img.lib-cover, img.lib-thumb").forEach((img) => { img.src = img.src.replace(/[?&]v=\d+$/, "") + "?v=" + libraryStamp; });
+  }
+
+  const NOTE_VI = [
+    [/^(\S+): skipped \(it is being written\)$/, (m) => `${m[1]}: bỏ qua vì file vừa mới được ghi`],
+    [/^Volume (\S+): no cover was found for it$/, (m) => `Tập ${m[1]}: không tìm thấy bìa`],
+    [/^No CBZ volume with a number in its name$/, () => "Không có file CBZ nào mang tên là số tập (ví dụ 0001.cbz)"],
+    [/^Could not tell which MangaDex series this is; choose it or paste a link$/, () => "Chưa biết đây là truyện nào trên MangaDex"],
+  ];
+  const noteVi = (n) => { for (const [re, f] of NOTE_VI) { const m = re.exec(n); if (m) return f(m); } return n; };
+
+  function resultRow(series, res) {
+    const label = { updated: "Đã cập nhật", partial: "Cập nhật một phần", nothing: "Không có gì để cập nhật", unmatched: "Chưa rõ truyện", failed: "Lỗi" }[res.status] || res.status;
+    const row = h("details", { class: "volume", open: res.status === "unmatched" || res.status === "partial" },
+      h("summary", null, `${res.status === "updated" ? "✓" : res.status === "unmatched" ? "?" : "–"} ${series.name}`,
+        h("span", { class: "muted small" }, ` · ${label}${res.updated ? `, ${res.updated} tập` : ""}${res.matched ? ` · MangaDex: ${res.matched}` : ""}`)),
+      h("div", { style: "padding:.5rem .85rem" },
+        (res.notes || []).length ? h("ul", { class: "small muted", style: "margin:.2rem 0" }, res.notes.map((n) => h("li", null, noteVi(n)))) : null,
+        res.status === "unmatched" || res.status === "nothing" ? chooser(series, res, () => row) : null));
+    return row;
+  }
+
+  // Lets the person tell which MangaDex series (or cover page) a library series is.
+  function chooser(series, res, rowOf) {
+    const link = h("input", { type: "text", placeholder: "Dán link MangaDex của truyện này", "aria-label": "Link MangaDex" });
+    const page = h("input", { type: "url", placeholder: "hoặc trang loạt truyện có bìa, vd bookwalker.com/series/…", "aria-label": "Trang bìa" });
+    const go = async (body) => {
+      try {
+        const out = await api("/api/library/covers", { method: "POST", timeout: 700000, body: Object.assign({ series: series.name }, body) });
+        rowOf().replaceWith(resultRow(series, out));
+        if (out.updated > 0) refreshCovers();
+      } catch (err) { toast(err.message, { bad: true }); }
+    };
+    return h("div", null,
+      (res.candidates || []).length ? h("div", null, h("p", { class: "small" }, "Có phải một trong các truyện này không?"),
+        (res.candidates || []).map((c) => h("div", { class: "row", style: "align-items:center;margin:.25rem 0" },
+          h("span", { class: "grow" }, `${c.title}${c.year ? ` (${c.year})` : ""}`),
+          h("button", { class: "btn small", onclick: () => go({ mangadex: c.id }) }, "Dùng")))) : null,
+      h("div", { class: "row", style: "margin-top:.5rem" }, h("label", { class: "field grow" }, h("span", null, "Link MangaDex"), link),
+        h("button", { class: "btn", onclick: () => link.value.trim() ? go({ mangadex: link.value.trim() }) : toast("Dán link MangaDex", { bad: true }) }, "Dùng link")),
+      h("div", { class: "row", style: "margin-top:.5rem" }, h("label", { class: "field grow" }, h("span", null, "Trang loạt truyện có bìa từng tập"), page),
+        h("button", { class: "btn", onclick: () => page.value.trim() ? go({ coverPage: page.value.trim() }) : toast("Dán địa chỉ trang", { bad: true }) }, "Dùng trang")));
+  }
+
   const thumb = (series, f, cls) => f.format === "cbz"
     ? h("img", { class: cls, src: coverUrl(series, f.name), alt: "", loading: "lazy",
         onerror: (e) => { e.target.replaceWith(h("div", { class: cls + " none" }, "Không có bìa")); } })
@@ -1025,7 +1114,10 @@ async function libraryPage() {
     app.append(h("section", { class: "series-block lib-series" },
       thumb(series.name, series.files[0], "lib-cover"),
       h("div", { class: "lib-body" },
-        h("h2", null, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập)`)),
+        h("div", { class: "row", style: "align-items:center" },
+          h("h2", { style: "margin:0" }, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập)`)),
+          series.files.some((f) => f.format === "cbz")
+            ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null),
         series.files.map((f) => h("div", { class: "file" },
           thumb(series.name, f, "lib-thumb"),
           h("span", { class: "name" }, f.name),

@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/leotaku/kojirou/cmd/formats/download"
@@ -70,6 +71,11 @@ type Server struct {
 	static  http.Handler
 	covers  *coverSet
 	thumbs  *thumbCache
+	meta    *MetaStore
+	// coversMu lets one cover update rewrite files at a time.
+	coversMu  sync.Mutex
+	writtenMu sync.Mutex
+	written   map[string]time.Time
 }
 
 func New(ctx context.Context, cfg Config) (*Server, error) {
@@ -102,6 +108,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		static:  noCache(http.FileServer(http.FS(sub))),
 		covers:  newCoverSet(),
 		thumbs:  newThumbCache(),
+		meta:    NewMetaStore(filepath.Join(cfg.ConfigDir, "library.json")),
 	}
 
 	return s, nil
@@ -134,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/library", s.handleLibrary)
 	mux.HandleFunc("GET /api/library/{series}/{file}", s.handleLibraryFile)
 	mux.HandleFunc("GET /api/library/{series}/{file}/cover", s.handleLibraryCover)
+	mux.HandleFunc("POST /api/library/covers", s.handleLibraryCovers)
 	mux.HandleFunc("GET /api/sources", s.handleListSources)
 	mux.HandleFunc("POST /api/sources", s.handleSaveSource)
 	mux.HandleFunc("DELETE /api/sources/{name}", s.handleDeleteSource)

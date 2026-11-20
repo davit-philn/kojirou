@@ -320,3 +320,33 @@ func bodyReadableErrorPolicy(ctx context.Context, resp *http.Response, err error
 		return false, nil
 	}
 }
+
+// FetchPicture downloads a picture (JPEG, PNG or GIF) as it is and returns it
+// with its file extension. It uses the patient client, so rate limits are
+// waited out; the context bounds the wait.
+func FetchPicture(ctx context.Context, address string) ([]byte, string, error) {
+	resp, err := getResp(httpClient, ctx, address)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 12<<20))
+	if err != nil {
+		return nil, "", fmt.Errorf("read: %w", err)
+	}
+	if _, format, err := image.DecodeConfig(bytes.NewReader(data)); err != nil {
+		return nil, "", fmt.Errorf("not a usable picture: %w", err)
+	} else {
+		switch format {
+		case "jpeg":
+			return data, ".jpg", nil
+		case "png":
+			return data, ".png", nil
+		case "gif":
+			return data, ".gif", nil
+		default:
+			return nil, "", fmt.Errorf("unsupported picture format %q", format)
+		}
+	}
+}

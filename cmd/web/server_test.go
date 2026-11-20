@@ -1187,3 +1187,127 @@ func TestLibraryCoverThumbnails(t *testing.T) {
 		}
 	}
 }
+
+// fakeDexWithCovers answers a search for "Blue Lock", describes the series and
+// lists its covers: volume 1 and 2 as PNG pictures of 10x15 and 12x18 pixels.
+func fakeDexWithCovers(t *testing.T) *md.Client {
+	t.Helper()
+	const id = "44444444-4444-4444-8444-444444444444"
+	picture := func(w, h int) []byte {
+		buf := new(bytes.Buffer)
+		if err := png.Encode(buf, image.NewGray(image.Rect(0, 0, w, h))); err != nil {
+			t.Fatal(err)
+		}
+
+		return buf.Bytes()
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/manga" && r.URL.Query().Get("title") != "":
+			_, _ = w.Write([]byte(`{"result":"ok","total":1,"data":[{"id":"` + id + `","attributes":{"title":{"en":"Blue Lock"},"description":{}},"relationships":[]}]}`))
+		case r.URL.Path == "/manga/"+id:
+			_, _ = w.Write([]byte(`{"result":"ok","data":{"id":"` + id + `","attributes":{"title":{"en":"Blue Lock"},"description":{}},"relationships":[]}}`))
+		case r.URL.Path == "/author":
+			_, _ = w.Write([]byte(`{"result":"ok","total":0,"data":[]}`))
+		case r.URL.Path == "/cover":
+			_, _ = w.Write([]byte(`{"result":"ok","total":2,"data":[` +
+				`{"id":"c1","attributes":{"volume":"1","fileName":"one.png"}},{"id":"c2","attributes":{"volume":"2","fileName":"two.png"}}]}`))
+		case r.URL.Path == "/covers/"+id+"/one.png":
+			_, _ = w.Write(picture(10, 15))
+		case r.URL.Path == "/covers/"+id+"/two.png":
+			_, _ = w.Write(picture(12, 18))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	api, _ := url.Parse(srv.URL + "/")
+	covers, _ := url.Parse(srv.URL + "/covers")
+	client := md.NewClient().WithBaseURLs(*api, *covers)
+	download.SetMangadexClient(client)
+	t.Cleanup(func() { download.SetMangadexClient(md.NewClient()) })
+
+	return client
+}
+
+func TestUpdateCoversOfTheLibrary(t *testing.T) {
+	dex := fakeDexWithCovers(t)
+	e := newEnv(t, func(c *Config) { c.Dex = dex })
+	old := time.Now().Add(-time.Hour)
+	for _, series := range []string{"Blue Lock", "Mystery Series"} {
+		if err := os.MkdirAll(filepath.Join(e.library, series), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range []string{"0001.cbz", "0002.cbz"} {
+			path := filepath.Join(e.library, series, file)
+			writeComic(t, path, 1)
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	post := func(body map[string]any) (libraryCoversResult, int) {
+		rec := e.do("POST", "/api/library/covers", body)
+		if rec.Code != 200 {
+			return libraryCoversResult{}, rec.Code
+		}
+
+		return decode[libraryCoversResult](t, rec), rec.Code
+	}
+
+	// The name decides: "Blue Lock" is the title of the only search result.
+	got, code := post(map[string]any{"series": "Blue Lock"})
+	if code != 200 || got.Status != "updated" || got.Updated != 2 || got.Matched != "Blue Lock" {
+		t.Fatalf("Blue Lock: %d %+v", code, got)
+	}
+	thumb := e.do("GET", "/api/library/Blue%20Lock/0002.cbz/cover", nil)
+	img, err := jpeg.Decode(thumb.Body)
+	if err != nil || img.Bounds().Dx() != 12 || img.Bounds().Dy() != 18 {
+		t.Errorf("volume 2 now shows a %v cover (%v), want MangaDex's 12x18 picture", img, err)
+	}
+
+	// Running it again is harmless, and the series is remembered.
+	again, _ := post(map[string]any{"series": "Blue Lock"})
+	if again.Updated != 2 {
+		t.Errorf("second run: %+v", again)
+	}
+	if meta, _ := e.srv.meta.Get("Blue Lock"); meta.MangaDexID == "" {
+		t.Error("the MangaDex series was not remembered")
+	}
+
+	// A name that matches nothing exactly asks for a choice and changes nothing.
+	unmatched, _ := post(map[string]any{"series": "Mystery Series"})
+	if unmatched.Status != "unmatched" || len(unmatched.Candidates) != 1 || unmatched.Candidates[0].Title != "Blue Lock" || unmatched.Updated != 0 {
+		t.Errorf("Mystery Series: %+v", unmatched)
+	}
+	chosen, _ := post(map[string]any{"series": "Mystery Series", "mangadex": "https://mangadex.org/title/44444444-4444-4444-8444-444444444444/blue-lock"})
+	if chosen.Updated != 2 {
+		t.Errorf("with the series chosen: %+v", chosen)
+	}
+
+	for name, body := range map[string]map[string]any{
+		"unknown series": {"series": "Nope"},
+		"bad link":       {"series": "Blue Lock", "mangadex": "not a link"},
+		"bad cover page": {"series": "Blue Lock", "coverPage": "ftp://x"},
+		"traversal":      {"series": "../Blue Lock"},
+	} {
+		if _, code := post(body); code != 404 && code != 400 {
+			t.Errorf("%s: status %d, want 404 or 400", name, code)
+		}
+	}
+}
+
+func TestUpdateCoversSkipsFilesThatAreBeingWritten(t *testing.T) {
+	dex := fakeDexWithCovers(t)
+	e := newEnv(t, func(c *Config) { c.Dex = dex })
+	if err := os.MkdirAll(filepath.Join(e.library, "Blue Lock"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeComic(t, filepath.Join(e.library, "Blue Lock", "0001.cbz"), 1) // just written
+
+	got := decode[libraryCoversResult](t, e.do("POST", "/api/library/covers", map[string]any{"series": "Blue Lock"}))
+	if got.Updated != 0 || !strings.Contains(strings.Join(got.Notes, " "), "being written") {
+		t.Errorf("a file written a moment ago must be left alone: %+v", got)
+	}
+}
