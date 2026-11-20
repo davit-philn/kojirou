@@ -553,3 +553,56 @@ func TestSameHostIgnoresWww(t *testing.T) {
 		}
 	}
 }
+
+// A card that is one link holding cover, title and the newest chapter label.
+func TestDetectCardsThatMentionTheirNewestChapter(t *testing.T) {
+	var home strings.Builder
+	home.WriteString(`<html><head><title>Home</title></head><body><ul class="grid">`)
+	for i := 1; i <= 8; i++ {
+		fmt.Fprintf(&home, `<li class="item"><a href="/truyen-tranh/series-%d-1%d" title="Truyện %d"><img src="/t/%d.jpg"><h3>Truyện %d</h3><span>Chương %d</span></a></li>`, i, i, i, i, i, 200+i)
+	}
+	home.WriteString(`</ul></body></html>`)
+	pages := map[string]string{
+		"/":                         home.String(),
+		"/truyen-tranh/series-1-11": divChapterList(12, "Chương"),
+		"/truyen-tranh/series-2-12": divChapterList(12, "Chương"),
+		"/truyen-tranh/series-3-13": divChapterList(12, "Chương"),
+	}
+	for i := 1; i <= 12; i++ {
+		pages[fmt.Sprintf("/truyen-tranh/series-1-11-chap-%d", i)] = srcChapterPage
+	}
+	s := newSite(t, pages)
+
+	d, err := detect(t, s.srv.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify(t, d, 12, 4)
+	if !d.Config.Browsable() || d.SeriesCount != 8 {
+		t.Fatalf("catalogue: %+v (series %d)", d.Config, d.SeriesCount)
+	}
+	page, err := ListSeries(context.Background(), s.srv.URL+"/", d.Config)
+	if err != nil || len(page.Items) != 8 || page.Items[0].Title != "Truyện 1" {
+		t.Errorf("series = %+v, %v", page, err)
+	}
+}
+
+func TestDetectFailureDescribesTheLinksWhenNoSeriesLooksLikeOne(t *testing.T) {
+	var home strings.Builder
+	home.WriteString(`<html><head><title>Home</title></head><body>`)
+	for _, name := range []string{"about", "login", "rules", "terms", "faq"} {
+		fmt.Fprintf(&home, `<a href="/%s">%s</a>`, name, name)
+	}
+	home.WriteString(`</body></html>`)
+	s := newSite(t, map[string]string{"/": home.String()})
+
+	_, err := detect(t, s.srv.URL+"/")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{"No link on the start page looked like a series", "Largest groups of links", "links like /about/…"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}

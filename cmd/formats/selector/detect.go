@@ -265,6 +265,8 @@ func (d *detector) findChapterList(startPage *url.URL, startDoc *goquery.Documen
 	message := fmt.Sprintf("no chapter list was found. %v", describeStart(startDoc))
 	if len(tried) > 0 {
 		message += " Pages opened to look for chapters: " + strings.Join(tried, "; ") + "."
+	} else {
+		message += " No link on the start page looked like a series, so no series page was opened. " + describeLinkGroups(startPage, startDoc)
 	}
 
 	return nil, nil, nil, errors.New(message)
@@ -274,6 +276,52 @@ func (d *detector) findChapterList(startPage *url.URL, startDoc *goquery.Documen
 // as one website.
 func sameHost(a, b string) bool {
 	return strings.TrimPrefix(strings.ToLower(a), "www.") == strings.TrimPrefix(strings.ToLower(b), "www.")
+}
+
+// describeLinkGroups summarises the kinds of links a page has, by the shape of
+// their addresses, so that a failed scan can be understood without the site.
+func describeLinkGroups(page *url.URL, doc *goquery.Document) string {
+	type group struct{ links, chapters, covers int }
+	groups := map[string]*group{}
+	for _, l := range pageLinks(page, doc) {
+		segs := strings.Split(strings.Trim(l.path, "/"), "/")
+		key := fmt.Sprintf("/%s/… (depth %d)", hrefShape(segs[0]), depth(l.path))
+		g := groups[key]
+		if g == nil {
+			g = &group{}
+			groups[key] = g
+		}
+		g.links++
+		if chapterLink(l.text, l.title, l.path) {
+			g.chapters++
+		}
+		if hasCover(l.node) {
+			g.covers++
+		}
+	}
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if groups[keys[i]].links != groups[keys[j]].links {
+			return groups[keys[i]].links > groups[keys[j]].links
+		}
+		return keys[i] < keys[j]
+	})
+	var parts []string
+	for i, k := range keys {
+		if i >= 4 {
+			break
+		}
+		g := groups[k]
+		parts = append(parts, fmt.Sprintf("%d links like %s (%d look like chapters, %d with an image)", g.links, k, g.chapters, g.covers))
+	}
+	if len(parts) == 0 {
+		return "The page has no links to other pages of the website."
+	}
+
+	return "Largest groups of links on the start page: " + strings.Join(parts, "; ") + "."
 }
 
 func pathOf(rawURL string) string {
@@ -347,6 +395,29 @@ func chapterLike(text, href string) bool {
 	return chapterWord.MatchString(text) || chapterHref.MatchString(href)
 }
 
+// chapterLabel matches a text that starts with a chapter word and a number.
+var chapterLabel = regexp.MustCompile(`(?i)^\s*(chương|chuong|chapter|chap|chapitre|episode|ch|ep|#)\.?\s*\d`)
+
+// maxChapterLabel is how long a link text can be and still be just a chapter
+// label ("Chương 245") rather than a card that mentions its latest chapter.
+const maxChapterLabel = 24
+
+// chapterLink is the stricter test used when looking for series: a link whose
+// address looks like a chapter's, or whose whole text is a short chapter
+// label. A card that shows a series title together with its newest chapter
+// ("Tên truyện Chương 245") links to the series, not to a chapter.
+func chapterLink(text, title, href string) bool {
+	if chapterHref.MatchString(href) {
+		return true
+	}
+	label := strings.TrimSpace(text)
+	if label == "" {
+		label = strings.TrimSpace(title)
+	}
+
+	return len([]rune(label)) <= maxChapterLabel && chapterLabel.MatchString(label)
+}
+
 // pageLinks lists the same-site links of a page that are not just anchors.
 func pageLinks(page *url.URL, doc *goquery.Document) []link {
 	var out []link
@@ -380,7 +451,7 @@ func seriesCandidates(page *url.URL, doc *goquery.Document) []string {
 	groups := map[string][]string{}
 	seen := map[string]bool{}
 	for _, l := range pageLinks(page, doc) {
-		if depth(l.path) < 2 || chapterLike(l.text+" "+l.title, l.path) || seen[l.url] {
+		if depth(l.path) < 2 || chapterLink(l.text, l.title, l.path) || seen[l.url] {
 			continue
 		}
 		seen[l.url] = true
@@ -665,7 +736,7 @@ func findSeriesCards(page *url.URL, doc *goquery.Document) (string, []SeriesItem
 	}
 	groups := map[string]*group{}
 	for _, l := range pageLinks(page, doc) {
-		if depth(l.path) < 1 || chapterLike(l.text+" "+l.title, l.path) {
+		if depth(l.path) < 1 || chapterLink(l.text, l.title, l.path) {
 			continue
 		}
 		segs := strings.Split(strings.Trim(l.path, "/"), "/")
