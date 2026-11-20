@@ -495,7 +495,7 @@ async function seriesPage(params) {
     coversEl = h("details", { class: "panel", open: !!coverPage || coverBusy || !!coverPreview },
       h("summary", null, "Bìa từng tập từ trang khác",
         coverPage && !coverBusy && !(coverPreview && coverPreview.error) && store.get("coverPage", {})[source + "|" + id] ? h("span", { class: "chip ok", style: "margin-left:.5rem" }, "đang dùng") : null),
-      h("p", { class: "muted small" }, "Dán địa chỉ trang loạt truyện của một cửa hàng sách (ví dụ BookWalker) liệt kê từng tập kèm ảnh bìa. Bìa của các tập khớp số tập sẽ thay bìa mặc định khi tải. Chỉ đọc được trang có bìa nằm sẵn trong HTML; hãy xem điều khoản của website trước khi dùng."),
+      h("p", { class: "muted small" }, "Dán địa chỉ trang loạt truyện (series) của một cửa hàng sách, ví dụ BookWalker: bookwalker.com/series/…/… (không phải trang của một tập, địa chỉ có chữ /volume/). Trang đó liệt kê từng tập kèm ảnh bìa. Bìa của các tập khớp số tập sẽ thay bìa mặc định khi tải. Chỉ đọc được trang có bìa nằm sẵn trong HTML; hãy xem điều khoản của website trước khi dùng."),
       h("div", { class: "row" },
         h("label", { class: "field grow" }, h("span", null, "Địa chỉ trang loạt truyện"), input),
         h("button", { class: "btn", onclick: preview }, "Xem thử")),

@@ -105,3 +105,30 @@ func TestFindVolumeCoversAndDownload(t *testing.T) {
 		t.Error("only http(s) addresses are accepted")
 	}
 }
+
+// A one-volume series: the card's link has no "vol-N" in it, only the label
+// "VOL 1" beside it, and the volume's own page leads to the series page.
+func TestVolumeCoversOfAOneVolumeSeriesAndFromAVolumePage(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/series/ABC/home-office-romance":
+			_, _ = w.Write([]byte(`<html><body><p>1 Volume</p><div class="card"><a href="/volume/XYZ/home-office-romance"><picture><img srcset="/c/small.jpg 80w, /c/large.jpg 480w"></picture></a>` +
+				`<span>VOL</span> <span>1</span><span>$</span><span>10.99</span><a href="/volume/XYZ/home-office-romance">Home Office Romance</a></div>` +
+				`<div class="more"><a href="/volume/OTHER/another-book"><img src="/c/other.jpg"></a></div></body></html>`))
+		case "/volume/XYZ/home-office-romance":
+			_, _ = w.Write([]byte(`<html><body><img src="/c/large.jpg"><a href="/series/ABC/home-office-romance">Series</a></body></html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	want := srv.URL + "/c/large.jpg"
+	for _, address := range []string{"/series/ABC/home-office-romance", "/volume/XYZ/home-office-romance"} {
+		covers, err := FindVolumeCovers(context.Background(), srv.URL+address, nil)
+		if err != nil || len(covers) != 1 || covers[0].Volume != "1" || covers[0].URL != want {
+			t.Errorf("%s: covers = %+v, %v; want volume 1 with %s", address, covers, err, want)
+		}
+	}
+}

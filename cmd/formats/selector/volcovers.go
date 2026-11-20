@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/html"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -37,6 +38,9 @@ var (
 	// e.g. "undead-unluck-vol-12" or "series-volume-3".
 	volumeInPath = regexp.MustCompile(`(?i)(?:^|[-_/])vol(?:ume)?[-_ ]?(\d+(?:\.\d+)?)$`)
 	srcsetItem   = regexp.MustCompile(`(\S+)\s+(\d+)w`)
+	// volumeSection matches addresses of the form /volume/<id>/<title>.
+	volumeSection   = regexp.MustCompile(`(?i)^/(?:volumes?|vol)/[^/]+/[^/]+/?$`)
+	cardVolumeLabel = regexp.MustCompile(`(?i)\bvol(?:ume)?\.?\s*(\d+(?:\.\d+)?)\b`)
 )
 
 // FindVolumeCovers reads a series page that shows its volumes as cards (a link
@@ -64,18 +68,53 @@ func FindVolumeCovers(ctx context.Context, pageURL string, client *http.Client) 
 
 	covers := volumeCoversFromDoc(page, doc)
 	if len(covers) == 0 {
+		// A page of one volume links to its series, which lists all volumes.
+		if series := seriesLinkOf(page, doc); series != "" && d.robots.allowed(pathOf(series)) {
+			if next, nextDoc, err := fetchDocument(ctx, client, series, SourceConfig{}); err == nil {
+				covers = volumeCoversFromDoc(next, nextDoc)
+			}
+		}
+	}
+	if len(covers) == 0 {
 		title := strings.TrimSpace(doc.Find("title").First().Text())
 		if looksLikeChallenge(doc, title) {
 			return nil, errors.New("the page looks like a browser check (anti-bot) page, which this tool cannot pass")
 		}
 
 		return nil, fmt.Errorf("no volume covers were found on this page (%d links, %d images). "+
-			"The page must list the volumes with their covers in its HTML; pages that add them with JavaScript cannot be read",
+			"The page must be a series page that lists the volumes with their covers in its HTML (for BookWalker: .../series/<id>/<title>); "+
+				"the page of a single volume does not list them, and pages that add them with JavaScript cannot be read",
 			doc.Find("a[href]").Length(), doc.Find("img").Length())
 	}
 
 	return covers, nil
 }
+
+// seriesLinkOf returns the address of the series page a volume page links to
+// (".../series/<id>/<title>" on the same website), or "".
+func seriesLinkOf(page *url.URL, doc *goquery.Document) string {
+	var found string
+	doc.Find("a[href]").EachWithBreak(func(_ int, a *goquery.Selection) bool {
+		abs, ok := resolve(page, a.AttrOr("href", ""))
+		if !ok {
+			return true
+		}
+		u, err := url.Parse(abs)
+		if err != nil || !sameHost(u.Host, page.Host) || u.Path == page.Path {
+			return true
+		}
+		if seriesSection.MatchString(u.Path) {
+			found = (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+			return false
+		}
+
+		return true
+	})
+
+	return found
+}
+
+var seriesSection = regexp.MustCompile(`(?i)^/series/[^/]+(?:/[^/]+)?/?$`)
 
 // volumeCoversFromDoc finds the volume cards of a parsed page.
 func volumeCoversFromDoc(page *url.URL, doc *goquery.Document) []VolumeCover {
@@ -98,18 +137,27 @@ func volumeCoversFromDoc(page *url.URL, doc *goquery.Document) []VolumeCover {
 		}
 		last := u.Path[strings.LastIndex(u.Path, "/")+1:]
 		m := volumeInPath.FindStringSubmatch(last)
-		if m == nil {
+		number := ""
+		switch {
+		case m != nil:
+			number = m[1]
+		case volumeSection.MatchString(u.Path):
+			// "/volume/ID/title" without a number in the title (a one-volume
+			// series, say): read the card's own label, e.g. "VOL 1".
+			number = labelledVolume(a)
+		}
+		if number == "" {
 			return
 		}
-		if _, seen := byVolume[m[1]]; seen && byVolume[m[1]].cover != "" {
+		if seen, ok := byVolume[number]; ok && seen.cover != "" {
 			return
 		}
-		cover := coverNear(page, a, m[1])
+		cover := coverNear(page, a, number)
 		if cover == "" {
 			return
 		}
-		number, _ := strconv.ParseFloat(m[1], 64)
-		byVolume[m[1]] = &found{volume: number, text: m[1], cover: cover}
+		value, _ := strconv.ParseFloat(number, 64)
+		byVolume[number] = &found{volume: value, text: number, cover: cover}
 	})
 
 	list := make([]*found, 0, len(byVolume))
@@ -126,6 +174,45 @@ func volumeCoversFromDoc(page *url.URL, doc *goquery.Document) []VolumeCover {
 	}
 
 	return result
+}
+
+// labelledVolume reads "VOL 1" from the card around a volume link. The words
+// and the number are often in separate elements, so the text is joined with
+// spaces.
+func labelledVolume(a *goquery.Selection) string {
+	scope := a
+	for depth := 0; depth < 4; depth++ {
+		if m := cardVolumeLabel.FindStringSubmatch(spacedText(scope)); m != nil {
+			return m[1]
+		}
+		scope = scope.Parent()
+		if scope.Length() == 0 {
+			break
+		}
+	}
+
+	return ""
+}
+
+// spacedText is the text of a selection with a space between text nodes.
+func spacedText(s *goquery.Selection) string {
+	var parts []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.TextNode {
+			if t := strings.TrimSpace(n.Data); t != "" {
+				parts = append(parts, t)
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	for _, n := range s.Nodes {
+		walk(n)
+	}
+
+	return strings.Join(parts, " ")
 }
 
 // coverNear returns the cover image of the card a volume link belongs to:
