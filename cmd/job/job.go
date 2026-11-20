@@ -185,6 +185,14 @@ func handleVolume(
 		return fmt.Errorf("pages: %w", err)
 	}
 
+	if opts.StripAds {
+		var cropped int
+		pages, cropped = removeAds(pages, opts.AdStrips, opts.OnAdStrips)
+		if cropped > 0 {
+			rep.Task(adsStepTitle(cropped), true).Done()
+		}
+	}
+
 	mangaForVolume := skeleton.WithChapters(volume.Sorted()).WithPages(pages)
 
 	p = rep.Task("Writing...", true)

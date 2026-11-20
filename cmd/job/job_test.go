@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/leotaku/kojirou/cmd/adstrip"
 	"github.com/leotaku/kojirou/cmd/formats/selector"
 	md "github.com/leotaku/kojirou/mangadex"
 )
@@ -402,4 +404,136 @@ func (s recordedStep) Cancel(message string) {
 		s.steps.cancelled = map[string]string{}
 	}
 	s.steps.cancelled[s.title] = message
+}
+
+// adPicture is a 200 wide page: content of its own seed, an optional banner
+// (the same picture on every page that has one) 60 pixels high at the top or bottom.
+func adPicture(seed int, banner string) image.Image {
+	const w, content, bannerH = 200, 280, 60
+	h := content
+	if banner != "" {
+		h += bannerH
+	}
+	g := image.NewGray(image.Rect(0, 0, w, h))
+	block := func(kind, bx, by int) uint8 {
+		z := uint64(kind)*0x9E3779B97F4A7C15 + uint64(bx)*0xBF58476D1CE4E5B9 + uint64(by)*0x94D049BB133111EB
+		z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+		z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+		return uint8(30 + (z^(z>>31))%200)
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var v uint8
+			switch {
+			case banner == "top" && y < bannerH:
+				v = block(900, x*16/w, y*16/w)
+			case banner == "bottom" && y >= h-bannerH:
+				v = block(901, x*16/w, (y-(h-bannerH))*16/w)
+			default:
+				yy := y
+				if banner == "top" {
+					yy -= bannerH
+				}
+				v = block(seed, x*12/w, yy*12/w)
+			}
+			g.Pix[y*g.Stride+x] = v
+		}
+	}
+
+	return g
+}
+
+func TestAdvertisingStripsAreCutWhileDownloading(t *testing.T) {
+	var learned [][]adstrip.Strip
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/series":
+			_, _ = w.Write([]byte(`<div class="c"><a href="/c/3">Chapter 3</a><a href="/c/2">Chapter 2</a><a href="/c/1">Chapter 1</a></div>`))
+		case strings.HasPrefix(r.URL.Path, "/c/"):
+			c := strings.TrimPrefix(r.URL.Path, "/c/")
+			_, _ = w.Write([]byte(`<div id="r"><img src="/p/` + c + `/0.png"><img src="/p/` + c + `/1.png"><img src="/p/` + c + `/2.png"></div>`))
+		case strings.HasPrefix(r.URL.Path, "/p/"):
+			var chapter, page int
+			_, _ = fmt.Sscanf(r.URL.Path, "/p/%d/%d.png", &chapter, &page)
+			banner := map[int]string{0: "top", 2: "bottom"}[page]
+			_ = png.Encode(w, adPicture(chapter*10+page, banner))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	opts := siteOptions(srv)
+	opts.Source.ChaptersPerVolume = 0
+	opts.Out = t.TempDir()
+	opts.StripAds = true
+	opts.OnAdStrips = func(s []adstrip.Strip) { learned = append(learned, s) }
+	if _, err := Run(context.Background(), opts, NopReporter{}); err != nil {
+		t.Fatal(err)
+	}
+
+	files, _ := filepath.Glob(filepath.Join(opts.Out, "*.cbz"))
+	if len(files) != 1 {
+		t.Fatalf("got %d files", len(files))
+	}
+	zr, err := zip.OpenReader(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close() //nolint:errcheck
+	heights := map[int]int{}
+	for _, f := range zr.File {
+		if !strings.HasSuffix(f.Name, ".jpg") {
+			continue
+		}
+		rc, _ := f.Open()
+		cfg, _, err := image.DecodeConfig(rc)
+		rc.Close() //nolint:errcheck
+		if err != nil {
+			t.Fatal(err)
+		}
+		heights[cfg.Height]++
+	}
+	// Nine pages, every one about 280 high once the 60 pixel banners are gone
+	// (not 340). The cut may take up to a row of the comparison grid (2 pixels
+	// here) more than the banner, but must never leave part of it.
+	total := 0
+	for height, n := range heights {
+		if height < 275 || height > 280 {
+			t.Errorf("a page is %d high, want 275 to 280 (banner gone, picture kept)", height)
+		}
+		total += n
+	}
+	if total != 9 {
+		t.Errorf("page heights = %v, want nine pages", heights)
+	}
+	if len(learned) == 0 {
+		t.Error("the strips found were not reported, so they cannot be remembered")
+	}
+
+	// Strips that are already known cut a download of a single chapter.
+	var known []adstrip.Strip
+	for _, l := range learned {
+		known = append(known, l...)
+	}
+	opts.Out = t.TempDir()
+	opts.OnAdStrips = nil
+	opts.AdStrips = known
+	opts.ChapterIDs = []string{srv.URL + "/c/2"}
+	if _, err := Run(context.Background(), opts, NopReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	files, _ = filepath.Glob(filepath.Join(opts.Out, "*.cbz"))
+	zr2, _ := zip.OpenReader(files[0])
+	defer zr2.Close() //nolint:errcheck
+	for _, f := range zr2.File {
+		if strings.HasSuffix(f.Name, ".jpg") {
+			rc, _ := f.Open()
+			cfg, _, _ := image.DecodeConfig(rc)
+			rc.Close() //nolint:errcheck
+			if cfg.Height < 275 || cfg.Height > 280 {
+				t.Errorf("%s is %d high after using known strips, want 275 to 280", f.Name, cfg.Height)
+			}
+		}
+	}
 }

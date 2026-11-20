@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/leotaku/kojirou/cmd/adstrip"
 	"github.com/leotaku/kojirou/cmd/device"
 	"github.com/leotaku/kojirou/cmd/formats/download"
 	"github.com/leotaku/kojirou/cmd/formats/kindle"
@@ -73,6 +74,7 @@ type Server struct {
 	covers  *coverSet
 	thumbs  *thumbCache
 	meta    *MetaStore
+	ads     *AdStore
 	// coversMu lets one cover update rewrite files at a time.
 	coversMu  sync.Mutex
 	convertMu sync.Mutex
@@ -111,6 +113,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		covers:  newCoverSet(),
 		thumbs:  newThumbCache(),
 		meta:    NewMetaStore(filepath.Join(cfg.ConfigDir, "library.json")),
+		ads:     NewAdStore(filepath.Join(cfg.ConfigDir, "ads.json")),
 	}
 
 	return s, nil
@@ -146,6 +149,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/library/covers", s.handleLibraryCovers)
 	mux.HandleFunc("GET /api/library/{series}/{file}/preview", s.handleLibraryPreview)
 	mux.HandleFunc("POST /api/library/convert", s.handleLibraryConvert)
+	mux.HandleFunc("POST /api/library/ads", s.handleLibraryAds)
 	mux.HandleFunc("POST /api/preview", s.handlePreview)
 	mux.HandleFunc("GET /api/sources", s.handleListSources)
 	mux.HandleFunc("POST /api/sources", s.handleSaveSource)
@@ -586,6 +590,9 @@ type downloadRequest struct {
 	RightToLeft *bool  `json:"rightToLeft"`
 	Autocrop    bool   `json:"autocrop"`
 	Widepage    string `json:"widepage"`
+	// StripAds cuts the advertising strips a website puts on the first and
+	// last page of its chapters (only for sources of your own).
+	StripAds bool `json:"stripAds"`
 	// Device, FitMode and Enhance prepare pages for an e-reader's screen.
 	Device      string `json:"device"`
 	FitMode     string `json:"fitMode"`
@@ -720,7 +727,7 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		rtl = *req.RightToLeft
 	}
 
-	return job.Options{
+	opts := job.Options{
 		Identifier:      req.ID,
 		Source:          cfg,
 		Fill:            fill,
@@ -744,7 +751,15 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		JPEGQuality:     quality,
 		Lossless:        req.Lossless,
 		LibraryDir:      s.cfg.LibraryDir,
-	}, nil
+	}
+	if req.StripAds && cfg != nil {
+		key := "source:" + req.Source
+		opts.StripAds = true
+		opts.AdStrips = s.ads.Get(key)
+		opts.OnAdStrips = func(found []adstrip.Strip) { _ = s.ads.Add(key, found) }
+	}
+
+	return opts, nil
 }
 
 func (s *Server) handleListDownloads(w http.ResponseWriter, r *http.Request) {

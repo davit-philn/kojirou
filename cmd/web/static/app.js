@@ -366,7 +366,7 @@ function previewRows(pages) {
 const defaultOptions = {
   format: "cbz", rightToLeft: true, autocrop: false, widepage: "preserve",
   dataSaver: "no", jpegQuality: 90, lossless: false, force: false,
-  device: "", fitMode: "smart", enhance: false,
+  device: "", fitMode: "smart", enhance: false, stripAds: true,
 };
 
 async function seriesPage(params) {
@@ -674,6 +674,7 @@ async function seriesPage(params) {
           chk("rightToLeft", "Đọc từ phải sang trái"),
           chk("autocrop", "Tự cắt viền trắng"),
           chk("enhance", "Làm rõ cho màn e-ink (xám, trắng đen rõ, làm nét)"),
+          chk("stripAds", "Tự cắt dải quảng cáo ở đầu/cuối chương (nguồn của bạn)", source === "mangadex"),
           chk("lossless", "CBZ lưu PNG (không nén mất dữ liệu)"),
           chk("force", "Tải lại cả tập đã có")),
         previewBox()));
@@ -946,7 +947,7 @@ async function seriesPage(params) {
       await api("/api/downloads", { method: "POST", body: {
         source, id, title: series.title, lang, chapterIds: [...selected],
         format: options.format, rightToLeft: options.rightToLeft, autocrop: options.autocrop,
-        widepage: options.widepage, device: options.device || undefined, fitMode: options.device ? options.fitMode : undefined, enhance: options.enhance,
+        widepage: options.widepage, device: options.device || undefined, fitMode: options.device ? options.fitMode : undefined, enhance: options.enhance, stripAds: source !== "mangadex" ? options.stripAds : undefined,
         dataSaver: source === "mangadex" ? options.dataSaver : "no",
         jpegQuality: options.jpegQuality, lossless: options.lossless, force: options.force,
         fill: fillActive() ? { source: fill.source, url: fill.url } : undefined,
@@ -1054,6 +1055,7 @@ async function libraryPage() {
   const refresh = h("button", { class: "btn small", onclick: render }, "Làm mới");
   const results = h("div", { class: "panel", hidden: true });
   const convertResults = h("div", { class: "panel", hidden: true });
+  const adsResults = h("div", { class: "panel", hidden: true });
   const cbzSeries = lib.filter((x) => x.files.some((f) => f.format === "cbz"));
   const ks = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", enhance: true, autocrop: true }, store.get("kindle", {}));
   const saveKs = () => store.set("kindle", ks);
@@ -1062,9 +1064,10 @@ async function libraryPage() {
   const cancelButton = h("button", { class: "btn danger small", hidden: true, onclick: () => stop && stop() }, "Dừng");
   app.append(h("h1", null, "Thư viện"),
     h("p", { class: "muted" }, "Thư mục lưu trên máy: ", h("code", null, cfg.library), " ", refresh),
-    h("div", { class: "row", style: "margin-bottom:1rem" }, updateAll, cancelButton,
+    h("div", { class: "row", style: "margin-bottom:1rem" }, updateAll,
+      h("button", { class: "btn", onclick: () => scanAds(lib.filter((x) => x.files.some((f) => f.format === "cbz"))) }, "Dọn quảng cáo cho tất cả"), cancelButton,
       h("span", { class: "muted small" }, "Tìm bìa đúng từng tập trên MangaDex (theo tên truyện) và ghi vào file .cbz, không tải lại truyện.")),
-    results, kindlePanel(), convertResults);
+    results, kindlePanel(), convertResults, adsResults);
   if (lib.length === 0) {
     app.append(h("div", { class: "empty" }, "Thư viện đang trống. Các tập đã tải sẽ hiện ở đây."));
     return;
@@ -1100,6 +1103,45 @@ async function libraryPage() {
         h("button", { class: "btn", onclick: preview }, "Xem trước 4 trang đầu"),
         h("button", { class: "btn primary", onclick: () => runConvert(cbzSeries) }, "Chuyển tất cả truyện")),
       previewOut);
+  }
+
+  // Looks for advertising strips on the pages of the given series and offers to cut them off.
+  async function scanAds(list) {
+    if (list.length === 0) { toast("Thư viện chưa có file CBZ nào", { bad: true }); return; }
+    adsResults.hidden = false;
+    const status = h("p", { class: "muted" });
+    const rows = h("div");
+    adsResults.replaceChildren(h("strong", null, "Dọn quảng cáo"), status, rows);
+    for (let i = 0; i < list.length; i++) {
+      status.textContent = `Đang quét ${i + 1}/${list.length}: ${list[i].name}… (quét mọi trang nên có thể mất vài phút)`;
+      try {
+        const res = await api("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: list[i].name } });
+        rows.append(adsRow(list[i], res));
+      } catch (err) { rows.append(h("div", { class: "notice" }, `${list[i].name}: ${err.message}`)); }
+    }
+    status.textContent = "Xong. Kiểm tra ảnh trước/sau rồi bấm “Cắt quảng cáo” ở truyện nào đúng.";
+  }
+
+  function adsRow(series, res) {
+    const box = h("div", { class: "notice", style: "margin:.5rem 0" });
+    if (res.pages === 0) {
+      box.append(`${series.name}: không thấy dải quảng cáo nào.`);
+      return box;
+    }
+    const apply = h("button", { class: "btn primary small", onclick: async () => {
+      apply.disabled = true;
+      try {
+        const out = await api("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: series.name, apply: true } });
+        box.replaceChildren(...nodes(`${series.name}: đã cắt quảng cáo ở ${res.pages} trang (${res.files.length} tập).`,
+          (out.notes || []).length ? h("ul", { class: "small muted" }, out.notes.map((n) => h("li", null, n))) : null));
+        if (typeof refreshCovers === "function") refreshCovers();
+      } catch (err) { apply.disabled = false; toast(err.message, { bad: true }); }
+    } }, "Cắt quảng cáo");
+    box.append(h("strong", null, series.name), ` — thấy dải quảng cáo ở ${res.pages} trang của ${res.files.length} tập (${res.strips} kiểu). Ảnh trang đầu tiên có quảng cáo, trước và sau khi cắt:`,
+      res.before ? h("div", { class: "preview-row" }, h("figure", null, h("img", { src: res.before, alt: "" }), h("figcaption", null, "Trước")),
+        h("figure", null, h("img", { src: res.after, alt: "" }), h("figcaption", null, "Sau"))) : null,
+      h("div", { class: "row" }, apply, h("span", { class: "muted small" }, "Chỉ các trang có quảng cáo bị làm lại; các trang khác giữ nguyên. Nên sao lưu thư viện nếu bạn lo lắng.")));
+    return box;
   }
 
   async function runConvert(list) {
@@ -1240,7 +1282,9 @@ async function libraryPage() {
           series.files.some((f) => f.format === "cbz")
             ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
           series.files.some((f) => f.format === "cbz")
-            ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null),
+            ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
+          series.files.some((f) => f.format === "cbz")
+            ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null),
         series.files.some((f) => f.format === "cbz") ? inlineChooser(series) : null,
         series.files.map((f) => h("div", { class: "file" },
           thumb(series.name, f, "lib-thumb"),

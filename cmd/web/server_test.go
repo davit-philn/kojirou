@@ -1480,3 +1480,141 @@ func TestConvertALibrarySeriesForADevice(t *testing.T) {
 		t.Errorf("a missing file: status %d, want 404", rec.Code)
 	}
 }
+
+// bannerPage is a 200 wide picture of 280 rows of its own content, with a
+// 60 row banner on top ("top") or at the bottom ("bottom") if asked.
+func bannerPage(seed int, banner string) image.Image {
+	const w, content, bannerH = 200, 280, 60
+	h := content
+	if banner != "" {
+		h += bannerH
+	}
+	g := image.NewGray(image.Rect(0, 0, w, h))
+	block := func(kind, bx, by int) uint8 {
+		z := uint64(kind)*0x9E3779B97F4A7C15 + uint64(bx)*0xBF58476D1CE4E5B9 + uint64(by)*0x94D049BB133111EB
+		z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+		z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+		return uint8(30 + (z^(z>>31))%200)
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var v uint8
+			switch {
+			case banner == "top" && y < bannerH:
+				v = block(900, x*16/w, y*16/w)
+			case banner == "bottom" && y >= h-bannerH:
+				v = block(901, x*16/w, (y-(h-bannerH))*16/w)
+			default:
+				yy := y
+				if banner == "top" {
+					yy -= bannerH
+				}
+				v = block(seed, x*12/w, yy*12/w)
+			}
+			g.Pix[y*g.Stride+x] = v
+		}
+	}
+
+	return g
+}
+
+func TestCleanAdvertisingStripsFromALibrarySeries(t *testing.T) {
+	e := newEnv(t, nil)
+	if err := os.MkdirAll(filepath.Join(e.library, "Series"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(e.library, "Series", "0001.cbz")
+	f, _ := os.Create(path)
+	zw := zip.NewWriter(f)
+	banners := []string{"top", "", "bottom", "top", "", "bottom"} // two chapters of three pages
+	for i, banner := range banners {
+		w, _ := zw.Create(fmt.Sprintf("%05d.png", i))
+		if err := png.Encode(w, bannerPage(i+1, banner)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, _ := zw.Create("ComicInfo.xml")
+	_, _ = w.Write([]byte(`<ComicInfo><Series>Series</Series></ComicInfo>`))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close() //nolint:errcheck
+	old := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(path, old, old)
+	before, _ := os.ReadFile(path)
+
+	// Looking first changes nothing.
+	look := decode[adsResult](t, e.do("POST", "/api/library/ads", map[string]any{"series": "Series"}))
+	if look.Pages != 4 || look.Strips != 2 || len(look.Files) != 1 || look.Before == "" || look.After == "" {
+		t.Fatalf("scan = %+v", look)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(after, before) {
+		t.Fatal("scanning must not change any file")
+	}
+
+	done := decode[adsResult](t, e.do("POST", "/api/library/ads", map[string]any{"series": "Series", "apply": true}))
+	if done.Pages != 4 {
+		t.Fatalf("apply = %+v", done)
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close() //nolint:errcheck
+	heights := map[string]int{}
+	for _, file := range zr.File {
+		if file.Name == "ComicInfo.xml" {
+			continue
+		}
+		rc, _ := file.Open()
+		cfg, _, err := image.DecodeConfig(rc)
+		rc.Close() //nolint:errcheck
+		if err != nil {
+			t.Fatal(err)
+		}
+		heights[file.Name] = cfg.Height
+	}
+	for name, h := range heights {
+		if h < 275 || h > 280 {
+			t.Errorf("%s is %d high, want 275 to 280 (every banner cut, content kept)", name, h)
+		}
+	}
+	if len(heights) != 6 {
+		t.Errorf("%d pictures left, want 6", len(heights))
+	}
+	if got := e.srv.ads.Get("series:Series"); len(got) != 2 {
+		t.Errorf("%d strips remembered, want 2", len(got))
+	}
+
+	// Nothing is left to cut the second time.
+	again := decode[adsResult](t, e.do("POST", "/api/library/ads", map[string]any{"series": "Series", "apply": true}))
+	if again.Pages != 0 {
+		t.Errorf("second run found %d pages with a strip", again.Pages)
+	}
+	if rec := e.do("POST", "/api/library/ads", map[string]any{"series": "Nope"}); rec.Code != 404 {
+		t.Errorf("unknown series: status %d", rec.Code)
+	}
+}
+
+func TestDownloadRequestAsksToStripAdsOnlyForCustomSources(t *testing.T) {
+	got := make(chan job.Options, 2)
+	e := newEnv(t, func(c *Config) {
+		c.Runner = func(ctx context.Context, opts job.Options, rep job.Reporter) (*job.Result, error) {
+			got <- opts
+			return &job.Result{}, nil
+		}
+	})
+	e.saveSource("demo")
+	if rec := e.do("POST", "/api/downloads", map[string]any{"source": "demo", "id": e.site.URL + "/series", "chapterIds": []string{"x"}, "stripAds": true}); rec.Code != 202 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if opts := <-got; !opts.StripAds || opts.OnAdStrips == nil {
+		t.Errorf("stripAds not passed on: %+v", opts)
+	}
+	if rec := e.do("POST", "/api/downloads", map[string]any{"source": "mangadex", "id": mdID, "chapterIds": []string{"x"}, "stripAds": true}); rec.Code != 202 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if opts := <-got; opts.StripAds {
+		t.Error("MangaDex pages carry no ads of a website, so nothing is cut")
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/leotaku/kojirou/cmd/adstrip"
 	"github.com/leotaku/kojirou/cmd/device"
 	"github.com/leotaku/kojirou/cmd/formats"
 	"github.com/leotaku/kojirou/cmd/formats/download"
@@ -72,6 +73,13 @@ type Options struct {
 	// Interactive makes MangaDex lookups fail fast instead of retrying for
 	// a long time. Use it when a person is waiting for the result.
 	Interactive bool
+
+	// StripAds cuts the advertising strips that a website adds to the top or
+	// bottom of the first and last page of a chapter. AdStrips are the strips
+	// already known for the source; OnAdStrips receives new ones found.
+	StripAds   bool
+	AdStrips   []adstrip.Strip
+	OnAdStrips func([]adstrip.Strip)
 
 	// Device is the ID of a screen profile (see device.Profiles) the pages
 	// are fitted to, FitMode says how ("fit", "smart" or "cover"; default
