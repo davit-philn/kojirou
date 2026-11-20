@@ -20,6 +20,10 @@ var (
 
 var APIBaseURL, _ = url.Parse(`https://api.mangadex.org/`)
 
+// UserAgent identifies this program to MangaDex, which asks clients not to
+// send the default one of their HTTP library.
+const UserAgent = "kojirou (+https://github.com/davit-philn/kojirou)"
+
 type Client struct {
 	http    *http.Client
 	baseURL url.URL
@@ -115,6 +119,7 @@ func (c *Client) doJSON(ctx context.Context, method, ref string, result, body in
 		return fmt.Errorf("prepare: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 
 	limitGlobal.Take()
 	resp, err := c.http.Do(req)

@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/leotaku/kojirou/cmd/formats"
 	md "github.com/leotaku/kojirou/mangadex"
+	"github.com/leotaku/kojirou/mangadex/api"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -292,6 +293,7 @@ func getResp(client *http.Client, ctx context.Context, url string) (*http.Respon
 	if err != nil {
 		return nil, fmt.Errorf("prepare: %w", err)
 	}
+	req.Header.Set("User-Agent", api.UserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do: %w", err)

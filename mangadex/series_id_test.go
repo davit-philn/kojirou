@@ -1,6 +1,10 @@
 package mangadex
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/leotaku/kojirou/mangadex/api"
+)
 
 func TestParseSeriesID(t *testing.T) {
 	const id = "c727d921-4294-455b-9bcc-2f0c7d29cd9a"
@@ -41,6 +45,18 @@ func TestParseSeriesIDAcceptsTabQueriesAndWithoutSlug(t *testing.T) {
 	} {
 		if id, ok := ParseSeriesID(link); !ok || id != "46748d60-9b15-4647-8250-de0926b20268" {
 			t.Errorf("ParseSeriesID(%q) = %q, %v", link, id, ok)
+		}
+	}
+}
+
+func TestCoverAddressesHaveNoDoubledSlash(t *testing.T) {
+	var cover api.CoverData
+	cover.Attributes.Volume = "1"
+	cover.Attributes.FileName = "a.jpg"
+	for _, base := range []string{"https://uploads.example.org/covers/", "https://uploads.example.org/covers"} {
+		paths := convertCovers(base, "SERIES", []api.CoverData{cover})
+		if want := "https://uploads.example.org/covers/SERIES/a.jpg"; len(paths) != 1 || paths[0].DataURL != want {
+			t.Errorf("base %q: got %+v, want %q", base, paths, want)
 		}
 	}
 }

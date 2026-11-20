@@ -58,7 +58,9 @@ func convertChapters(ca []api.ChapterData, groupMap map[string]api.GroupData) Ch
 func convertCovers(coverBaseURL string, mangaID string, co []api.CoverData) PathList {
 	result := make(PathList, 0)
 	for _, info := range co {
-		url := strings.Join([]string{coverBaseURL, mangaID, info.Attributes.FileName}, "/")
+		// The base address ends with a slash; a doubled one ("covers//id/file")
+		// is not the address MangaDex serves and its picture server refuses it.
+		url := strings.Join([]string{strings.TrimRight(coverBaseURL, "/"), mangaID, info.Attributes.FileName}, "/")
 		result = append(result, Path{
 			DataURL:           url,
 			ImageIdentifier:   0,
