@@ -83,7 +83,7 @@ func FindVolumeCovers(ctx context.Context, pageURL string, client *http.Client) 
 
 		return nil, fmt.Errorf("no volume covers were found on this page (%d links, %d images). "+
 			"The page must be a series page that lists the volumes with their covers in its HTML (for BookWalker: .../series/<id>/<title>); "+
-				"the page of a single volume does not list them, and pages that add them with JavaScript cannot be read",
+			"the page of a single volume does not list them, and pages that add them with JavaScript cannot be read",
 			doc.Find("a[href]").Length(), doc.Find("img").Length())
 	}
 
