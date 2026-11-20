@@ -1190,8 +1190,9 @@ func TestLibraryCoverThumbnails(t *testing.T) {
 
 // fakeDexWithCovers answers a search for "Blue Lock", describes the series and
 // lists its covers: volume 1 and 2 as PNG pictures of 10x15 and 12x18 pixels.
-func fakeDexWithCovers(t *testing.T) *md.Client {
+func fakeDexWithCovers(t *testing.T, brokenPictures ...bool) *md.Client {
 	t.Helper()
+	broken := len(brokenPictures) > 0 && brokenPictures[0]
 	const id = "44444444-4444-4444-8444-444444444444"
 	picture := func(w, h int) []byte {
 		buf := new(bytes.Buffer)
@@ -1212,6 +1213,8 @@ func fakeDexWithCovers(t *testing.T) *md.Client {
 		case r.URL.Path == "/cover":
 			_, _ = w.Write([]byte(`{"result":"ok","total":2,"data":[` +
 				`{"id":"c1","attributes":{"volume":"1","fileName":"one.png"}},{"id":"c2","attributes":{"volume":"2","fileName":"two.png"}}]}`))
+		case broken && strings.HasPrefix(r.URL.Path, "/covers/"):
+			http.NotFound(w, r)
 		case r.URL.Path == "/covers/"+id+"/one.png":
 			_, _ = w.Write(picture(10, 15))
 		case r.URL.Path == "/covers/"+id+"/two.png":
@@ -1309,5 +1312,27 @@ func TestUpdateCoversSkipsFilesThatAreBeingWritten(t *testing.T) {
 	got := decode[libraryCoversResult](t, e.do("POST", "/api/library/covers", map[string]any{"series": "Blue Lock"}))
 	if got.Updated != 0 || !strings.Contains(strings.Join(got.Notes, " "), "being written") {
 		t.Errorf("a file written a moment ago must be left alone: %+v", got)
+	}
+}
+
+// When the picture server cannot be reached, the update gives up after two
+// covers in a row instead of waiting out every volume.
+func TestUpdateCoversGivesUpWhenPicturesCannotBeDownloaded(t *testing.T) {
+	dex := fakeDexWithCovers(t, true)
+	e := newEnv(t, func(c *Config) { c.Dex = dex })
+	old := time.Now().Add(-time.Hour)
+	if err := os.MkdirAll(filepath.Join(e.library, "Blue Lock"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"0001.cbz", "0002.cbz"} {
+		path := filepath.Join(e.library, "Blue Lock", file)
+		writeComic(t, path, 1)
+		_ = os.Chtimes(path, old, old)
+	}
+
+	got := decode[libraryCoversResult](t, e.do("POST", "/api/library/covers", map[string]any{"series": "Blue Lock"}))
+	notes := strings.Join(got.Notes, " | ")
+	if got.Updated != 0 || got.Status != "nothing" || !strings.Contains(notes, "cover download failed") || !strings.Contains(notes, "unreachable") {
+		t.Errorf("result = %+v, want the failure explained", got)
 	}
 }

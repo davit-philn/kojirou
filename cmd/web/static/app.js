@@ -1076,6 +1076,9 @@ async function libraryPage() {
   // The same choice, available before anything was run: paste a link and update this series.
   function inlineChooser(series) {
     const message = h("p", { class: "small", style: "margin:.5rem 0 0" });
+    const onStart = (error) => {
+      message.replaceChildren(error ? `Lỗi: ${error}` : spinner(), error ? null : h("span", { class: "muted" }, " Đang tìm và tải bìa… có thể mất vài phút, đừng đóng trang."));
+    };
     const onResult = (out) => {
       const text = out.updated > 0 ? `Đã cập nhật bìa cho ${out.updated} tập${out.matched ? ` (MangaDex: ${out.matched})` : ""}.`
         : "Không cập nhật được tập nào.";
@@ -1083,7 +1086,7 @@ async function libraryPage() {
     };
     return h("details", { class: "panel", style: "margin:.5rem 0 0" },
       h("summary", null, "Dán link để lấy bìa (MangaDex hoặc trang loạt truyện)"),
-      chooser(series, {}, onResult), message);
+      chooser(series, {}, onResult, onStart), message);
   }
 
   function resultRow(series, res) {
@@ -1098,15 +1101,16 @@ async function libraryPage() {
   }
 
   // Lets the person tell which MangaDex series (or cover page) a library series is.
-  function chooser(series, res, onResult) {
+  function chooser(series, res, onResult, onStart) {
     const link = h("input", { type: "text", placeholder: "Dán link MangaDex của truyện này", "aria-label": "Link MangaDex" });
     const page = h("input", { type: "url", placeholder: "hoặc trang loạt truyện có bìa, vd bookwalker.com/series/…", "aria-label": "Trang bìa" });
     const go = async (body) => {
+      if (onStart) onStart();
       try {
         const out = await api("/api/library/covers", { method: "POST", timeout: 700000, body: Object.assign({ series: series.name }, body) });
         onResult(out);
         if (out.updated > 0) refreshCovers();
-      } catch (err) { toast(err.message, { bad: true }); }
+      } catch (err) { toast(err.message, { bad: true }); if (onStart) onStart(err.message); }
     };
     return h("div", null,
       (res.candidates || []).length ? h("div", null, h("p", { class: "small" }, "Có phải một trong các truyện này không?"),

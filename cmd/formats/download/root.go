@@ -325,7 +325,17 @@ func bodyReadableErrorPolicy(ctx context.Context, resp *http.Response, err error
 // with its file extension. It uses the patient client, so rate limits are
 // waited out; the context bounds the wait.
 func FetchPicture(ctx context.Context, address string) ([]byte, string, error) {
-	resp, err := getResp(httpClient, ctx, address)
+	return fetchPicture(httpClient, ctx, address)
+}
+
+// FetchPictureQuick is FetchPicture for a person who is waiting: it gives up
+// after a few quick retries instead of waiting out a rate limit.
+func FetchPictureQuick(ctx context.Context, address string) ([]byte, string, error) {
+	return fetchPicture(quickHTTPClient, ctx, address)
+}
+
+func fetchPicture(client *http.Client, ctx context.Context, address string) ([]byte, string, error) {
+	resp, err := getResp(client, ctx, address)
 	if err != nil {
 		return nil, "", err
 	}

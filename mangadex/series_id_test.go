@@ -31,3 +31,16 @@ func TestParseSeriesID(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSeriesIDAcceptsTabQueriesAndWithoutSlug(t *testing.T) {
+	for _, link := range []string{
+		"https://mangadex.org/title/46748d60-9b15-4647-8250-de0926b20268?tab=art",
+		"https://mangadex.org/title/46748d60-9b15-4647-8250-de0926b20268",
+		"https://mangadex.org/title/46748d60-9b15-4647-8250-de0926b20268/some-slug?tab=chapters#top",
+		"  https://www.mangadex.org/title/46748D60-9B15-4647-8250-DE0926B20268/  ",
+	} {
+		if id, ok := ParseSeriesID(link); !ok || id != "46748d60-9b15-4647-8250-de0926b20268" {
+			t.Errorf("ParseSeriesID(%q) = %q, %v", link, id, ok)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -163,7 +164,7 @@ func (s *Server) updateSeriesCovers(ctx context.Context, req libraryCoversReques
 			}
 		}
 		if dexID != "" {
-			paths, err := download.PatientClient().FetchCovers(ctx, dexID)
+			paths, err := download.InteractiveClient().FetchCovers(ctx, dexID)
 			if err != nil {
 				res.Notes = append(res.Notes, "MangaDex covers: "+err.Error())
 			}
@@ -186,7 +187,13 @@ func (s *Server) updateSeriesCovers(ctx context.Context, req libraryCoversReques
 		return res
 	}
 
-	for volume, name := range volumes {
+	failures := 0
+	for _, volume := range sortedVolumes(volumes) {
+		name := volumes[volume]
+		if failures >= 2 {
+			res.Skipped++
+			continue
+		}
 		pic, ok := sources[volume]
 		if !ok {
 			res.Skipped++
@@ -199,12 +206,17 @@ func (s *Server) updateSeriesCovers(ctx context.Context, req libraryCoversReques
 			res.Notes = append(res.Notes, fmt.Sprintf("%v: skipped (it is being written)", name))
 			continue
 		}
-		data, ext, err := download.FetchPicture(ctx, pic.url)
+		data, ext, err := fetchCover(ctx, pic.url)
 		if err != nil {
+			failures++
 			res.Skipped++
 			res.Notes = append(res.Notes, fmt.Sprintf("%v: cover download failed (%v)", name, err))
+			if failures >= 2 {
+				res.Notes = append(res.Notes, "Two covers in a row could not be downloaded, so the rest were skipped: the picture server may be unreachable from this computer")
+			}
 			continue
 		}
+		failures = 0
 		if err := cbz.SetCover(path, cbz.CoverUpdate{Picture: data, Ext: ext, Series: title, Volume: volume}); err != nil {
 			res.Skipped++
 			res.Notes = append(res.Notes, fmt.Sprintf("%v: %v", name, err))
@@ -232,6 +244,30 @@ func (s *Server) updateSeriesCovers(ctx context.Context, req libraryCoversReques
 }
 
 type volumePicture struct{ url string }
+
+// coverDownloadTimeout bounds the download of one cover.
+const coverDownloadTimeout = 40 * time.Second
+
+func fetchCover(ctx context.Context, address string) ([]byte, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, coverDownloadTimeout)
+	defer cancel()
+
+	return download.FetchPictureQuick(ctx, address)
+}
+
+// sortedVolumes lists the volume numbers in order, so that results come in a
+// predictable order.
+func sortedVolumes(volumes map[string]string) []string {
+	keys := make([]string, 0, len(volumes))
+	for k := range volumes {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return md.NewIdentifier(keys[i]).Less(md.NewIdentifier(keys[j]))
+	})
+
+	return keys
+}
 
 // writtenByUs tells a file this server rewrote itself from one that a download
 // may still be writing.
