@@ -370,3 +370,7 @@ The **Thư viện** page lists every series with its files and offers:
 - **Tạo AZW3**: an `.azw3` next to each CBZ, for Kindles that cannot open CBZ (make the CBZ ready for the device first);
 - **Chép sang máy đọc**: copies a series into a folder such as the Kindle's `E:\documents`;
 - **Tập mới?**: for series downloaded with this version, opens the series page to download new volumes.
+
+## Starting with automatic updates (Windows)
+
+`contrib/chay-kojirou.bat` (copy it into the library folder, next to the series folders) starts Kojirou and, before that, looks on GitHub for a newer version of the branch. If there is one it downloads it, builds it with Go and replaces `kojirou.exe`; with no network or no Go it just starts the version it has. `chay-kojirou.bat --no-update` skips the check. The installed version is kept in `kojirou.version` next to `kojirou.exe`.
