@@ -661,8 +661,17 @@ async function seriesPage(params) {
       h("input", { type: "checkbox", checked: options[key], onchange: (e) => { options[key] = e.target.checked; save(); } }), label);
     const quality = h("input", { type: "number", min: "1", max: "100", value: String(options.jpegQuality),
       onchange: (e) => { options.jpegQuality = Math.min(100, Math.max(1, parseInt(e.target.value, 10) || 90)); e.target.value = options.jpegQuality; save(); } });
-    return h("details", { class: "panel" },
+    const preset = h("button", { class: "btn small", onclick: () => {
+      Object.assign(options, { format: "cbz", device: "kindle-pw3", fitMode: "smart", widepage: "split", autocrop: true, enhance: false });
+      save();
+      const fresh = optionsPanel();
+      fresh.open = true;
+      panel.replaceWith(fresh);
+      toast("Đã chọn cài đặt cho Kindle Paperwhite 3: truyện tải về sẽ có sẵn kích thước vừa màn hình");
+    } }, "Cài sẵn cho Kindle PW3");
+    const panel = h("details", { class: "panel" },
       h("summary", null, "Tuỳ chọn tải xuống"),
+      h("p", { class: "muted small" }, "Chọn “Thiết bị đọc” trước khi tải thì ảnh được chỉnh ngay lúc tải, không cần tải xong rồi chuyển lại (không bị thêm bản sao, không bị xử lý hai lần). ", preset),
       h("div", { class: "options" },
         sel("format", [["cbz", "CBZ (đa số app đọc truyện)"], ["mobi", "MOBI/AZW3 (Kindle)"]], "Định dạng"),
         sel("device", [["", "Không (giữ kích thước gốc)"], ...devices.map((d) => [d.id, d.name])], "Thiết bị đọc"),
@@ -678,6 +687,7 @@ async function seriesPage(params) {
           chk("lossless", "CBZ lưu PNG (không nén mất dữ liệu)"),
           chk("force", "Tải lại cả tập đã có")),
         previewBox()));
+    return panel;
   }
 
   const VOLUME_PATTERN = /^(\d{1,4}(\.\d{1,2})?|special)$/i;
@@ -1137,7 +1147,7 @@ async function libraryPage() {
     };
     return h("details", { class: "panel" },
       h("summary", null, "Chuyển truyện cho máy đọc (Kindle…)"),
-      h("p", { class: "muted small" }, "Làm lại ảnh của các file CBZ cho vừa màn hình máy đọc (không cắt vào nội dung, đệm theo màu nền trang, làm rõ chữ trên màn e-ink). File gốc được giữ nguyên; bản chuyển lưu thành một truyện mới tên “… [mã thiết bị]”."),
+      h("p", { class: "muted small" }, "Chỉ dùng cho truyện ĐÃ tải về mà chưa chỉnh. Truyện mới nên chọn thiết bị ngay lúc tải (Tuỳ chọn tải xuống) để khỏi chuyển lại. Làm lại ảnh của các file CBZ cho vừa màn hình máy đọc (không cắt vào nội dung, đệm theo màu nền trang, làm rõ chữ trên màn e-ink). File gốc được giữ nguyên; bản chuyển lưu thành một truyện mới tên “… [mã thiết bị]”."),
       h("div", { class: "options" },
         select("device", devices.map((d) => [d.id, d.name]), "Thiết bị đọc"),
         select("fitMode", [["smart", "Phủ thông minh (khuyên dùng)"], ["fit", "Vừa khít, đệm trắng"], ["cover", "Cắt để phủ đầy"]], "Cách phủ màn hình"),
