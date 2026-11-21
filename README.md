@@ -149,7 +149,7 @@ kojirou serve                           # http://127.0.0.1:8080, downloads go to
 kojirou serve --library D:\Manga --addr 127.0.0.1:9000
 ```
 
-+ **Duyệt truyện** :: Browse popular or latest series on MangaDex, search by title and filter by translation language
++ **Tìm truyện** (the first page; browsing one source at a time is under *Duyệt riêng từng nguồn*) :: Browse popular or latest series on MangaDex, search by title and filter by translation language
 + **Chapter picker** :: Open a series, tick whole volumes or single chapters (or a range) and choose the format and image options
 + **Đang tải** :: Watch queued downloads, with progress per volume, and cancel them
 + **Thư viện** :: Shows each series with its cover and a thumbnail per volume (the picture `ComicInfo.xml` marks as the front cover, else the first one of the CBZ), and downloads finished volumes again through the browser
@@ -196,7 +196,7 @@ Links are stored in `links.json` next to `sources.json` in the configuration dir
 ## Automatic source detection
 
 In the web interface, **Nguồn → Tự nhận diện từ trang chủ** takes only a website's home page.
-When the page shows a list of series, the source can also be browsed like MangaDex: **Duyệt truyện** then shows a grid of its series with covers, a "load more" button when the page has a next-page link, and a search box when the website has a GET search form. The settings it finds are `series_selector`, `next_page_selector`, `search_url` (with `{q}`) and `list_url`; covers are fetched through the local server with the website's Referer.
+When the page shows a list of series, the source can also be browsed like MangaDex: **Tìm truyện → Duyệt riêng từng nguồn** then shows a grid of its series with covers, a "load more" button when the page has a next-page link, and a search box when the website has a GET search form. The settings it finds are `series_selector`, `next_page_selector`, `search_url` (with `{q}`) and `list_url`; covers are fetched through the local server with the website's Referer.
 After you confirm that you may use the site's content, Kojirou reads `robots.txt`, opens a few pages of that site (at most 8, same host only, with a pause between requests), finds the chapter list and the page images, builds the selectors itself and saves the result as a source.
 If the titles contain `Tập N` / `Vol N` the volume rule is filled in too; otherwise the notes say how to add one.
 Detected selectors can be generic on small sites; use **Thử** to check them and edit them if needed.
@@ -263,7 +263,7 @@ The moves are remembered in the browser for that series and are sent with the do
 
 ## Opening a series by its address
 
-At the top of **Duyệt truyện** a box takes the address of a series: a MangaDex link opens it from MangaDex, and a link on the website of any saved source opens it with that source. For a website without a source it says so and points to the Nguồn tab.
+At the top of **Tìm truyện** a box takes the address of a series: a MangaDex link opens it from MangaDex, and a link on the website of any saved source opens it with that source. For a website without a source it says so and points to the Nguồn tab.
 
 ## Custom sources
 
@@ -377,8 +377,12 @@ The **Thư viện** page lists every series with its files and offers:
 
 ## Searching every source at once
 
-**Tìm nhiều nguồn** searches MangaDex and all saved sources that have a search address at the same time (a few requests in parallel, one slow or broken source never stops the others), groups the results that are the same series (titles are compared without case, accents, punctuation and bracketed notes) and, for the series you pick, lists the chapters of every chosen source in one table: which source has which chapter, the whole chapter numbers that **no** source has (warned in red), and what each source lacks between chapter 1 and its last one. Untick a source that found a different series.
+The search box of **Tìm truyện** searches MangaDex and all saved sources that have a search address at the same time (a few requests in parallel, one slow or broken source never stops the others), groups the results that are the same series (titles are compared without case, accents, punctuation and bracketed notes) and, for the series you pick, lists the chapters of every chosen source in one table: which source has which chapter, the whole chapter numbers that **no** source has (warned in red), and what each source lacks between chapter 1 and its last one. Untick a source that found a different series.
 
 ### Downloading from several sources in one go
 
 Under the chapter table, **Tải truyện từ các nguồn này** downloads the series as one: the sources are in an order of preference (move them with the arrows) and each chapter comes from the first source that has it; click a ✓ in the table to take that one chapter from another source (● marks the one in use). Below the table you choose which chapters (`1-50, 55`), how many chapters go into a volume (when MangaDex is not one of the sources — if it is, MangaDex decides the volumes), the Kindle PW3 preparation and the advert cutting. A source that cannot be read is skipped and reported; chapters that are not numbered are not downloaded. In the library such a series gets **Tập mới?**, which repeats the search to find new chapters.
+
+### Pages
+
+The menu has three pages: **Tìm truyện** (search every source at once, paste a link, or browse one source), **Thư viện** (the queue of downloads is shown at the top while there is one, then the downloaded series) and **Nguồn** (your websites).

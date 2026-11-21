@@ -110,10 +110,11 @@ let cleanup = null;
 const routes = {
   "": browsePage,
   "series": seriesPage,
-  "downloads": downloadsPage,
   "library": libraryPage,
   "sources": sourcesPage,
-  "multi": multiPage,
+  // Older addresses: the search and the downloads moved into the other pages.
+  "multi": (params) => { location.hash = "#/?" + params.toString(); },
+  "downloads": () => { location.hash = "#/library"; },
 };
 
 function parseHash() {
@@ -126,7 +127,7 @@ async function render() {
   if (cleanup) { cleanup(); cleanup = null; }
   const { path, params } = parseHash();
   const page = routes[path] || browsePage;
-  const navKey = path === "series" || path === "" ? "browse" : path;
+  const navKey = path === "series" || path === "" || path === "multi" ? "browse" : path === "downloads" ? "library" : path;
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("active", a.dataset.nav === navKey);
   app.replaceChildren();
   window.scrollTo(0, 0);
@@ -142,7 +143,7 @@ window.addEventListener("hashchange", render);
 
 // ---------- browse ----------
 
-async function browsePage() {
+async function browsePage(params) {
   const config = await api("/api/config").catch(() => ({ sources: ["mangadex"], catalogues: {} }));
   const sources = config.sources;
   const catalogues = config.catalogues || {};
@@ -166,8 +167,13 @@ async function browsePage() {
       t.setAttribute("aria-selected", String(active));
     });
   }
-  app.append(h("h1", null, "Duyệt truyện"), pasteBox(), tabs, body);
-  renderBody();
+  let listed = false;
+  const openNow = !!state.openBrowse;
+  if (openNow) { delete state.openBrowse; store.set("browse", state); }
+  const browseBox = h("details", { class: "panel", open: openNow, ontoggle: (e) => { if (e.target.open && !listed) { listed = true; renderBody(); } } },
+    h("summary", null, "Duyệt riêng từng nguồn (MangaDex, danh sách của từng website)"), tabs, body);
+  app.append(h("h1", null, "Tìm truyện"), pasteBox(), multiBlock(config, params), browseBox);
+  if (openNow) { listed = true; renderBody(); }
 
   // Paste the address of a series from MangaDex or from any saved source's website.
   function pasteBox() {
@@ -907,7 +913,7 @@ async function seriesPage(params) {
     const coverHint = hasCoverSource ? null
       : h("div", { class: "notice", style: "margin-top:1rem" },
           h("strong", null, "Chưa có bìa: "),
-          "file tải về sẽ không có ảnh bìa riêng (app đọc truyện lấy trang đầu của chương 1 làm bìa). Để có bìa: mở truyện bằng cách bấm thẻ truyện trong lưới Duyệt truyện, hoặc dùng “Chia tập theo MangaDex” (bìa từng tập), hoặc dán trang loạt truyện ở mục “Bìa từng tập từ trang khác”.");
+          "file tải về sẽ không có ảnh bìa riêng (app đọc truyện lấy trang đầu của chương 1 làm bìa). Để có bìa: mở truyện bằng cách bấm thẻ truyện trong lưới Tìm truyện (mục Duyệt riêng từng nguồn), hoặc dùng “Chia tập theo MangaDex” (bìa từng tập), hoặc dán trang loạt truyện ở mục “Bìa từng tập từ trang khác”.");
     chaptersBox.replaceChildren(...nodes(manualPanel(manualOpen), toolbar, infoBox, coverHint, noteBox, list));
     refresh();
   }
@@ -967,7 +973,7 @@ async function seriesPage(params) {
         coverUrl: source !== "mangadex" && !volumesFrom ? (params.get("cover") || undefined) : undefined,
         coverPage: store.get("coverPage", {})[source + "|" + id] || undefined,
       } });
-      toast(`Đã thêm “${series.title}” vào hàng đợi.`, { link: { href: "#/downloads", text: "Xem tiến độ" } });
+      toast(`Đã thêm “${series.title}” vào hàng đợi.`, { link: { href: "#/library", text: "Xem tiến độ" } });
       pollBadge();
     } catch (err) {
       toast(err.message, { bad: true });
@@ -982,27 +988,30 @@ async function seriesPage(params) {
 const STATE_LABEL = { queued: "Chờ", running: "Đang tải", done: "Xong", failed: "Lỗi", canceled: "Đã huỷ" };
 const STATE_CLASS = { done: "ok", failed: "bad", running: "hl" };
 
-async function downloadsPage() {
+// The queue of downloads, shown at the top of the library while there are any.
+// onFinished is called once when everything that was running has ended.
+function downloadsSection(onFinished) {
   const list = h("div");
-  app.append(h("h1", null, "Đang tải"), list);
-  let stopped = false, timer = null, busy = false;
-
+  const box = h("section", { class: "downloads", hidden: true }, h("h2", { style: "margin:.25rem 0" }, "Đang tải"), list);
+  let stopped = false, timer = null, busy = false, hadActive = false;
   async function refresh() {
     if (busy || stopped) return;
     busy = true;
     try {
       const jobs = await api("/api/downloads");
       if (stopped) return;
-      list.replaceChildren(...(jobs.length
-        ? jobs.map(jobCard)
-        : [h("div", { class: "empty" }, "Chưa có lượt tải nào. Vào ", h("a", { href: "#/" }, "Duyệt truyện"), " để chọn truyện.")]));
+      box.hidden = jobs.length === 0;
+      list.replaceChildren(...jobs.map(jobCard));
+      const active = jobs.some((j) => j.state === "queued" || j.state === "running");
+      if (hadActive && !active && onFinished) onFinished();
+      hadActive = active;
     } catch (err) {
-      if (!stopped) list.replaceChildren(errorBox(err));
+      if (!stopped) { box.hidden = false; list.replaceChildren(errorBox(err)); }
     } finally { busy = false; }
   }
-  await refresh();
+  refresh();
   timer = setInterval(refresh, 1000);
-  return () => { stopped = true; clearInterval(timer); };
+  return { el: box, stop: () => { stopped = true; clearInterval(timer); } };
 }
 
 function jobCard(job) {
@@ -1019,7 +1028,7 @@ function jobCard(job) {
       active ? h("button", { class: "btn small danger", onclick: async () => {
         try { await api("/api/downloads/" + encodeURIComponent(job.id), { method: "DELETE" }); } catch (e) { toast(e.message, { bad: true }); }
       } }, "Huỷ") : null,
-      job.state === "done" ? h("a", { class: "btn small", href: "#/library" }, "Mở thư viện") : null),
+      null),
     job.error ? errorBox(job.error) : null,
     visible.length ? h("div", { class: "steps" }, visible.map(stepRow)) : null);
 }
@@ -1111,8 +1120,7 @@ const expandRanges = (ranges) => {
   return out;
 };
 
-async function multiPage(params) {
-  const config = await api("/api/config").catch(() => ({ sources: ["mangadex"] }));
+function multiBlock(config, params) {
   const view = Object.assign({ q: "", lang: store.get("browse", {}).lang || "vi" }, store.get("multi", {}));
   if (params && params.get("q")) view.q = params.get("q");
   const input = h("input", { type: "search", placeholder: "Tên truyện, ví dụ Blue Lock", value: view.q, "aria-label": "Tên truyện" });
@@ -1126,8 +1134,8 @@ async function multiPage(params) {
   const go = h("button", { class: "btn primary", type: "submit" }, "Tìm ở tất cả nguồn");
   const form = h("form", { style: "display:flex;gap:.5rem;flex-wrap:wrap;align-items:center", onsubmit: (e) => { e.preventDefault(); search(); } },
     h("div", { style: "flex:1;min-width:14rem" }, input), lang, go);
-  app.append(h("h1", null, "Tìm nhiều nguồn"),
-    h("p", { class: "muted" }, `Tìm một truyện trong cả ${config.sources.length} nguồn (MangaDex và các nguồn của bạn) cùng lúc, gộp danh sách chương và cảnh báo chương nào còn thiếu. Nguồn nào không có ô tìm kiếm sẽ bị bỏ qua, hãy dán địa chỉ truyện của nguồn đó ở trang Duyệt truyện.`),
+  const root = h("div", { style: "margin-bottom:1rem" },
+    h("p", { class: "muted" }, `Gõ tên truyện: tìm trong cả ${config.sources.length} nguồn (MangaDex và các nguồn của bạn) cùng lúc, gộp danh sách chương, cảnh báo chương còn thiếu rồi tải từ nhiều nguồn. Nguồn không có ô tìm kiếm sẽ bị bỏ qua: dán địa chỉ truyện của nguồn đó vào ô phía trên.`),
     form, status, results, detail);
 
   async function search() {
@@ -1265,7 +1273,7 @@ async function multiPage(params) {
       dl.disabled = true;
       try {
         await api("/api/downloads", { method: "POST", body });
-        toast("Đã đưa vào hàng đợi tải. Xem tiến độ ở tab Đang tải.", { link: { href: "#/downloads", text: "Mở Đang tải" } });
+        toast("Đã đưa vào hàng đợi tải. Tiến độ hiện ở đầu trang Thư viện.", { link: { href: "#/library", text: "Mở Thư viện" } });
       } catch (err) { toast(err.message, { bad: true }); }
       dl.disabled = false;
     } }, "Tải truyện từ các nguồn này");
@@ -1286,7 +1294,7 @@ async function multiPage(params) {
         h("div", { class: "row", style: "margin-top:.5rem" }, dl)));
   }
   if (params && params.get("q")) search();
-  else if (view.q) input.focus();
+  return root;
 }
 
 // ---------- library ----------
@@ -1300,6 +1308,9 @@ async function libraryPage() {
   const results = h("div", { class: "panel", hidden: true });
   const convertResults = h("div", { class: "panel", hidden: true });
   const adsResults = h("div", { class: "panel", hidden: true });
+  const finished = h("div", { class: "notice", hidden: true }, "Có truyện vừa tải xong. ",
+    h("button", { class: "btn small primary", onclick: () => render() }, "Làm mới thư viện"));
+  const downloads = downloadsSection(() => { finished.hidden = false; });
   const isConverted = (name) => { const m = /\s\[([^\]]+)\]$/.exec(name); return !!m && (m[1] === "converted" || (cfg.devices || []).some((d) => d.id === m[1])); };
   const cbzSeries = lib.filter((x) => x.files.some((f) => f.format === "cbz"));
   const ks = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", enhance: false, autocrop: true }, store.get("kindle", {}));
@@ -1307,7 +1318,7 @@ async function libraryPage() {
   let stop = null; // set while an update runs: aborts it
   const updateAll = h("button", { class: "btn primary", onclick: () => runUpdate(lib.filter((x) => x.files.some((f) => f.format === "cbz"))) }, "Cập nhật ảnh bìa cho tất cả");
   const cancelButton = h("button", { class: "btn danger small", hidden: true, onclick: () => stop && stop() }, "Dừng");
-  app.append(h("h1", null, "Thư viện"),
+  app.append(h("h1", null, "Thư viện"), downloads.el, finished,
     h("p", { class: "muted" }, "Thư mục lưu trên máy: ", h("code", null, cfg.library), " ", refresh),
     h("div", { class: "row", style: "margin-bottom:1rem" }, updateAll,
       h("button", { class: "btn", onclick: () => scanAds(lib.filter((x) => x.files.some((f) => f.format === "cbz"))) }, "Dọn quảng cáo cho tất cả"), cancelButton,
@@ -1315,7 +1326,7 @@ async function libraryPage() {
     results, kindlePanel(), convertResults, adsResults);
   if (lib.length === 0) {
     app.append(h("div", { class: "empty" }, "Thư viện đang trống. Các tập đã tải sẽ hiện ở đây."));
-    return;
+    return () => downloads.stop();
   }
   // The settings box for preparing the library's files for a reader, with a preview and the convert buttons.
   function kindlePanel() {
@@ -1686,7 +1697,7 @@ async function libraryPage() {
       hasCbz(series) ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
       hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
       hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null,
-      series.source ? h("a", { class: "btn small", title: "Mở trang truyện để xem và tải các tập mới", href: series.source === "multi" ? "#/multi?" + new URLSearchParams({ q: series.sourceId }) : "#/series?" + new URLSearchParams({ source: series.source, id: series.sourceId, lang: store.get("browse", {}).lang || "en" }) }, "Tập mới?") : null,
+      series.source ? h("a", { class: "btn small", title: "Mở trang truyện để xem và tải các tập mới", href: series.source === "multi" ? "#/?" + new URLSearchParams({ q: series.sourceId }) : "#/series?" + new URLSearchParams({ source: series.source, id: series.sourceId, lang: store.get("browse", {}).lang || "en" }) }, "Tập mới?") : null,
       hasCbz(series) ? h("button", { class: "btn small", title: "Tạo file .azw3 cho Kindle không mở được CBZ", onclick: () => runMobi([series]) }, "Tạo AZW3") : null,
       backups ? h("button", { class: "btn small", title: "Trả cả truyện về như trước khi sửa", onclick: async () => {
         if (!confirm(`Khôi phục ${backups} file của “${series.name}” về bản trước khi sửa?`)) return;
@@ -1748,6 +1759,7 @@ async function libraryPage() {
   app.append(h("div", { style: "display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.75rem 0" }, search, sorter,
     h("span", { class: "muted small" }, `${lib.length} thư mục · ${formatSize(allBytes)}`)), list);
   draw();
+  return () => downloads.stop();
 }
 
 // ---------- sources ----------
@@ -1851,9 +1863,9 @@ async function sourcesPage() {
       ? h("p", null, `Nguồn này duyệt được như MangaDex: tìm thấy ${detection.seriesCount} truyện ở trang vừa quét${detection.config.search_url ? ", có cả ô tìm kiếm" : ""}. `,
           h("button", { class: "btn primary small", onclick: () => {
             const st = Object.assign({ lang: "vi", order: "", adult: false }, store.get("browse", {}));
-            st.source = detection.name; store.set("browse", st); location.hash = "#/";
-          } }, "Duyệt truyện của nguồn này"))
-      : h("p", null, "Để dùng: vào ", h("a", { href: "#/" }, "Duyệt truyện"), `, chọn nguồn “${detection.name}” rồi dán địa chỉ một truyện của website.`)) : null;
+            st.source = detection.name; st.openBrowse = true; store.set("browse", st); location.hash = "#/";
+          } }, "Mở nguồn này ở trang Tìm truyện"))
+      : h("p", null, "Để dùng: vào ", h("a", { href: "#/" }, "Tìm truyện"), `, mở mục Duyệt riêng từng nguồn, chọn nguồn “${detection.name}” rồi dán địa chỉ một truyện của website.`)) : null;
 
   app.append(
     h("h1", null, "Nguồn"),
