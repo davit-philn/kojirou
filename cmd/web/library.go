@@ -13,6 +13,9 @@ type LibraryFile struct {
 	Size     int64     `json:"size"`
 	Format   string    `json:"format"`
 	Modified time.Time `json:"modified"`
+	// HasBackup is set when the file as it was before an edit is kept in the
+	// library's .backup folder.
+	HasBackup bool `json:"hasBackup,omitempty"`
 }
 
 type LibrarySeries struct {
@@ -35,7 +38,7 @@ func scanLibrary(dir string) ([]LibrarySeries, error) {
 
 	result := make([]LibrarySeries, 0)
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		files, err := os.ReadDir(filepath.Join(dir, e.Name()))
@@ -52,12 +55,16 @@ func scanLibrary(dir string) ([]LibrarySeries, error) {
 			if err != nil {
 				continue
 			}
-			series.Files = append(series.Files, LibraryFile{
+			entry := LibraryFile{
 				Name:     f.Name(),
 				Size:     info.Size(),
 				Format:   format,
 				Modified: info.ModTime(),
-			})
+			}
+			if _, err := os.Stat(filepath.Join(dir, backupDir, e.Name(), f.Name())); err == nil {
+				entry.HasBackup = true
+			}
+			series.Files = append(series.Files, entry)
 		}
 		if len(series.Files) > 0 {
 			sort.Slice(series.Files, func(i, j int) bool { return series.Files[i].Name < series.Files[j].Name })

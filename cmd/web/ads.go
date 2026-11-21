@@ -289,6 +289,10 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 			res.Notes = append(res.Notes, fmt.Sprintf("%s: skipped, %d of %d pages would be removed, which is too many to be right", name, dropped, pageCounts[fi]))
 			continue
 		}
+		if err := s.backUp(req.Series, name); err != nil {
+			res.Notes = append(res.Notes, name+": no backup could be made, so it was left alone ("+err.Error()+")")
+			continue
+		}
 		_, err := cbz.Rewrite(path,
 			func(i int) bool { return cuts[i].Drop },
 			func(i int) bool { c, ok := cuts[i]; return ok && !c.Drop },
@@ -346,4 +350,26 @@ func decodeEntry(file *zip.File) image.Image {
 	}
 
 	return img
+}
+
+// eachPageName lists the names of the pictures of a CBZ in page order.
+func eachPageName(path string, f func(name string)) error {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return err
+	}
+	defer zr.Close() //nolint:errcheck
+	var names []string
+	for _, file := range zr.File {
+		switch strings.ToLower(filepath.Ext(file.Name)) {
+		case ".jpg", ".jpeg", ".png", ".gif":
+			names = append(names, file.Name)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		f(n)
+	}
+
+	return nil
 }

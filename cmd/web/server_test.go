@@ -1787,3 +1787,134 @@ func TestACoverRepeatedInEveryVolumeIsNotTakenForAnAdvertisement(t *testing.T) {
 		t.Fatalf("the cover was taken for an advertisement: %+v", res)
 	}
 }
+
+// makeCBZ writes a CBZ of n pages (page i is bannerPage(seeds[i])) and makes it look old.
+func makeCBZ(t *testing.T, path string, seeds ...int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	for i, seed := range seeds {
+		w, _ := zw.Create(fmt.Sprintf("%05d.png", i))
+		if err := png.Encode(w, bannerPage(seed, "")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = zw.Close()
+	f.Close() //nolint:errcheck
+	old := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(path, old, old)
+}
+
+func TestManageLibrary(t *testing.T) {
+	e := newEnv(t, nil)
+	a := filepath.Join(e.library, "Demo", "0001.cbz")
+	makeCBZ(t, a, 1, 2, 3, 4)
+	makeCBZ(t, filepath.Join(e.library, "Demo", "0002.cbz"), 5, 6)
+
+	// Pages: count and a thumbnail.
+	pages := decode[map[string]int](t, e.do("GET", "/api/library/Demo/0001.cbz/pages", nil))
+	if pages["count"] != 4 {
+		t.Fatalf("pages = %v", pages)
+	}
+	if rec := e.do("GET", "/api/library/Demo/0001.cbz/page/2?w=100", nil); rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("page thumbnail: %d %s", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if rec := e.do("GET", "/api/library/Demo/0001.cbz/page/9", nil); rec.Code != 404 {
+		t.Errorf("page 9: %d", rec.Code)
+	}
+
+	// Removing pages backs the file up first and renumbers.
+	res := decode[removePagesResult](t, e.do("POST", "/api/library/pages/remove", map[string]any{"series": "Demo", "file": "0001.cbz", "pages": []int{2, 3}}))
+	if res.Removed != 2 {
+		t.Fatalf("removed %+v", res)
+	}
+	if n, _ := pageCount(a); n != 2 {
+		t.Errorf("%d pages left, want 2", n)
+	}
+	if _, err := os.Stat(filepath.Join(e.library, backupDir, "Demo", "0001.cbz")); err != nil {
+		t.Errorf("no backup: %v", err)
+	}
+	if rec := e.do("POST", "/api/library/pages/remove", map[string]any{"series": "Demo", "file": "0001.cbz", "pages": []int{1, 2}}); rec.Code != 400 {
+		t.Errorf("removing every page: %d, want 400", rec.Code)
+	}
+	list := decode[[]LibrarySeries](t, e.do("GET", "/api/library", nil))
+	if len(list) != 1 || !list[0].Files[0].HasBackup || list[0].Files[1].HasBackup {
+		t.Errorf("library = %+v (and .backup must not show as a series)", list)
+	}
+
+	// Restoring brings the 4 pages back.
+	if rec := e.do("POST", "/api/library/backup", map[string]any{"series": "Demo", "action": "restore"}); rec.Code != 200 {
+		t.Fatalf("restore: %d %s", rec.Code, rec.Body)
+	}
+	if n, _ := pageCount(a); n != 4 {
+		t.Errorf("%d pages after restoring, want 4", n)
+	}
+
+	// Rename the series and a file.
+	if rec := e.do("POST", "/api/library/rename", map[string]any{"series": "Demo", "name": "Demo 2"}); rec.Code != 200 {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.do("POST", "/api/library/rename", map[string]any{"series": "Demo 2", "file": "0002.cbz", "name": "Vol 2"}); rec.Code != 200 {
+		t.Fatalf("rename file: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(filepath.Join(e.library, "Demo 2", "Vol 2.cbz")); err != nil {
+		t.Errorf("file not renamed: %v", err)
+	}
+	if rec := e.do("POST", "/api/library/rename", map[string]any{"series": "Demo 2", "file": "0001.cbz", "name": "../x"}); rec.Code != 400 {
+		t.Errorf("bad file name: %d", rec.Code)
+	}
+
+	// Export to a folder.
+	dest := t.TempDir()
+	out := decode[map[string]any](t, e.do("POST", "/api/library/export", map[string]any{"series": "Demo 2", "dest": dest}))
+	if out["done"].(float64) != 2 {
+		t.Errorf("export = %v", out)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "Demo 2", "Vol 2.cbz")); err != nil {
+		t.Errorf("not exported: %v", err)
+	}
+	if rec := e.do("POST", "/api/library/export", map[string]any{"series": "Demo 2", "dest": "relative/dir"}); rec.Code != 400 {
+		t.Errorf("relative dest: %d", rec.Code)
+	}
+
+	// Delete one file, then the series.
+	if rec := e.do("POST", "/api/library/delete", map[string]any{"series": "Demo 2", "file": "Vol 2.cbz"}); rec.Code != 200 {
+		t.Fatalf("delete file: %d", rec.Code)
+	}
+	del := decode[manageResult](t, e.do("POST", "/api/library/delete", map[string]any{"series": "Demo 2"}))
+	if del.Done != 1 {
+		t.Errorf("delete series = %+v", del)
+	}
+	if _, err := os.Stat(filepath.Join(e.library, "Demo 2")); !os.IsNotExist(err) {
+		t.Errorf("the empty folder is still there: %v", err)
+	}
+}
+
+func TestCuttingAdvertisementsKeepsABackup(t *testing.T) {
+	e := newEnv(t, nil)
+	for c := 0; c < 3; c++ {
+		makeCBZ(t, filepath.Join(e.library, "Ads", fmt.Sprintf("%04d.cbz", c+1)), c*10+1, c*10+2, c*10+3, 777)
+	}
+	res := decode[adsResult](t, e.do("POST", "/api/library/ads", map[string]any{"series": "Ads", "apply": true}))
+	if res.Dropped != 3 {
+		t.Fatalf("%+v", res)
+	}
+	list := decode[[]LibrarySeries](t, e.do("GET", "/api/library", nil))
+	for _, f := range list[0].Files {
+		if !f.HasBackup {
+			t.Errorf("%s has no backup", f.Name)
+		}
+	}
+	if rec := e.do("POST", "/api/library/backup", map[string]any{"series": "Ads", "action": "restore"}); rec.Code != 200 {
+		t.Fatal(rec.Code)
+	}
+	if n, _ := pageCount(filepath.Join(e.library, "Ads", "0001.cbz")); n != 4 {
+		t.Errorf("restored file has %d pages, want 4", n)
+	}
+}
