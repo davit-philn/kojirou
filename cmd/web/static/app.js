@@ -1496,6 +1496,7 @@ async function libraryPage() {
       hasCbz(series) ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
       hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
       hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null,
+      series.source ? h("a", { class: "btn small", title: "Mở trang truyện để xem và tải các tập mới", href: "#/series?" + new URLSearchParams({ source: series.source, id: series.sourceId, lang: store.get("browse", {}).lang || "en" }) }, "Tập mới?") : null,
       hasCbz(series) ? h("button", { class: "btn small", title: "Tạo file .azw3 cho Kindle không mở được CBZ", onclick: () => runMobi([series]) }, "Tạo AZW3") : null,
       backups ? h("button", { class: "btn small", title: "Trả cả truyện về như trước khi sửa", onclick: async () => {
         if (!confirm(`Khôi phục ${backups} file của “${series.name}” về bản trước khi sửa?`)) return;

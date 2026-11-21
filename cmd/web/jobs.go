@@ -124,8 +124,10 @@ func (j *Job) Task(title string, vanishing bool) job.Progress {
 }
 
 type Manager struct {
-	run   Runner
-	queue chan *Job
+	run Runner
+	// onDone, if set, is called after a job finished successfully.
+	onDone func(info JobInfo, opts job.Options)
+	queue  chan *Job
 
 	mu   sync.Mutex
 	jobs []*Job
@@ -249,6 +251,18 @@ func (m *Manager) work(ctx context.Context) {
 }
 
 func (m *Manager) runJob(parent context.Context, j *Job) {
+	defer func() {
+		if m.onDone == nil {
+			return
+		}
+		j.mu.Lock()
+		info := j.info
+		j.mu.Unlock()
+		if info.State == "done" {
+			m.onDone(info, j.opts)
+		}
+	}()
+
 	j.mu.Lock()
 	if j.canceled {
 		j.mu.Unlock()

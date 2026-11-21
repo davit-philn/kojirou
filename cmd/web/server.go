@@ -117,7 +117,28 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		ads:     NewAdStore(filepath.Join(cfg.ConfigDir, "ads.json")),
 	}
 
+	s.jobs.onDone = s.rememberOrigin
+
 	return s, nil
+}
+
+// rememberOrigin notes where a downloaded series came from, so that the
+// library can lead back to its page to look for new volumes.
+func (s *Server) rememberOrigin(info JobInfo, opts job.Options) {
+	if info.Dir == "" || opts.Identifier == "" {
+		return
+	}
+	dir := filepath.Clean(info.Dir)
+	// The series folder is the one directly in the library (a Kindle folder
+	// layout may nest deeper; then the first level below the library is it).
+	rel, err := filepath.Rel(s.cfg.LibraryDir, dir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return
+	}
+	name := strings.Split(filepath.ToSlash(rel), "/")[0]
+	meta, _ := s.meta.Get(name)
+	meta.Source, meta.SourceID = info.Source, opts.Identifier
+	_ = s.meta.Save(name, meta)
 }
 
 // allowedHosts lists the Host header values accepted. Rejecting everything
@@ -789,6 +810,11 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+	for i := range list {
+		if meta, err := s.meta.Get(list[i].Name); err == nil && meta.Source != "" && meta.SourceID != "" {
+			list[i].Source, list[i].SourceID = meta.Source, meta.SourceID
+		}
 	}
 	writeJSON(w, http.StatusOK, list)
 }

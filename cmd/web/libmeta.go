@@ -14,6 +14,11 @@ type SeriesMeta struct {
 	MangaDexID string `json:"mangadexId,omitempty"`
 	// CoverPage is a series page that shows each volume with its cover.
 	CoverPage string `json:"coverPage,omitempty"`
+	// Source and SourceID say where the series was downloaded from ("mangadex"
+	// and the series ID, or the name of a saved source and the series page),
+	// so that the library can lead back to it for new volumes.
+	Source   string `json:"source,omitempty"`
+	SourceID string `json:"sourceId,omitempty"`
 }
 
 // MetaStore keeps SeriesMeta by library series name in a JSON file.

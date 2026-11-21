@@ -358,3 +358,15 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 Converting for a device never converts a converted copy (folders named `… [kindle-pw3]`); "Chuyển tất cả truyện" skips them.
 
 Long operations of the library (cover update, device conversion, advert scan and cutting) show a progress bar with the file being worked on. "Làm rõ cho màn e-ink" is gentle and off by default; converting an already converted copy used to apply it again and again and made pages rough.
+
+## Managing the library
+
+The **Thư viện** page lists every series with its files and offers:
+
+- search, sorting (name, newest, biggest) and the total size; converted copies (`… [kindle-pw3]`) are shown under their original;
+- **Xem trang**: a grid of a file's pages; click the advertising pages and delete them, optionally remembering the picture so look-alike pages in other files are found by **Dọn quảng cáo**;
+- **Xoá**, **Đổi tên** for files and series (renaming a series renames its converted copies too);
+- **Backups**: before pages are removed or advertisements cut, the file is kept in `library/.backup/`; **Khôi phục** puts it back, **Xoá sao lưu** frees the space;
+- **Tạo AZW3**: an `.azw3` next to each CBZ, for Kindles that cannot open CBZ (make the CBZ ready for the device first);
+- **Chép sang máy đọc**: copies a series into a folder such as the Kindle's `E:\documents`;
+- **Tập mới?**: for series downloaded with this version, opens the series page to download new volumes.

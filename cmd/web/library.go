@@ -21,6 +21,9 @@ type LibraryFile struct {
 type LibrarySeries struct {
 	Name  string        `json:"name"`
 	Files []LibraryFile `json:"files"`
+	// Source and SourceID are where the series was downloaded from, if known.
+	Source   string `json:"source,omitempty"`
+	SourceID string `json:"sourceId,omitempty"`
 }
 
 var libraryFormats = map[string]string{".cbz": "cbz", ".azw3": "mobi"}

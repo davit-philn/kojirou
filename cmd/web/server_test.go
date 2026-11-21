@@ -1935,3 +1935,27 @@ func TestMakeAZW3FromTheCBZFilesOfASeries(t *testing.T) {
 		t.Errorf("files = %+v", list[0].Files)
 	}
 }
+
+func TestLibraryRemembersWhereASeriesCameFrom(t *testing.T) {
+	var lib string
+	e := newEnv(t, func(c *Config) {
+		lib = c.LibraryDir
+		c.Runner = func(ctx context.Context, opts job.Options, rep job.Reporter) (*job.Result, error) {
+			makeCBZ(t, filepath.Join(lib, "Origin", "0001.cbz"), 1, 2)
+			return &job.Result{Title: "Origin", Dir: filepath.Join(lib, "Origin")}, nil
+		}
+	})
+	rec := e.do("POST", "/api/downloads", map[string]any{"id": "9b3c2f00-0000-4000-8000-000000000001", "chapterIds": []string{"x"}})
+	if rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		list := decode[[]LibrarySeries](t, e.do("GET", "/api/library", nil))
+		if len(list) == 1 && list[0].Source == "mangadex" && list[0].SourceID != "" {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("the library did not learn where the series came from")
+}
