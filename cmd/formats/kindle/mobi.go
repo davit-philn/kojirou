@@ -134,3 +134,32 @@ func templateToString(tpl *template.Template, data interface{}) string {
 
 	return buf.String()
 }
+
+// BookFromImages makes a fixed layout book of ready pages, for pages that
+// come from an archive rather than from MangaDex. The pages go in as they are.
+func BookFromImages(title string, authors []string, cover image.Image, pages []image.Image, ltr bool) mobi.Book {
+	refs := make([]string, 0, len(pages))
+	for i := range pages {
+		refs = append(refs, templateToString(pageTemplate, records.To32(i+1)))
+	}
+	hash := fnv.New32()
+	hash.Write([]byte(title))
+	fmt.Fprint(hash, len(pages))
+	if cover == nil && len(pages) > 0 {
+		cover = pages[0]
+	}
+
+	return mobi.Book{
+		Title:       title,
+		Authors:     authors,
+		CreatedDate: time.Unix(0, 0),
+		Language:    language.Und,
+		FixedLayout: true,
+		RightToLeft: !ltr,
+		CoverImage:  cover,
+		Images:      pages,
+		Chapters:    []mobi.Chapter{{Title: title, Chunks: mobi.Chunks(refs...)}},
+		CSSFlows:    []string{basePageCSS},
+		UniqueID:    hash.Sum32(),
+	}
+}

@@ -316,3 +316,92 @@ func isConvertedName(name string) bool {
 	_, ok := device.Lookup(tag)
 	return ok
 }
+
+type mobiRequest struct {
+	Series string `json:"series"`
+	// LeftToRight turns the reading direction round (manga reads right to left).
+	LeftToRight bool   `json:"leftToRight"`
+	ProgressID  string `json:"progressId"`
+}
+
+// handleLibraryMOBI writes an AZW3 next to every CBZ of a series, for Kindles
+// that cannot open CBZ. The pages go in as they are in the CBZ, so make the
+// CBZ ready for the device first.
+func (s *Server) handleLibraryMOBI(w http.ResponseWriter, r *http.Request) {
+	var req mobiRequest
+	if err := decodeBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	files, ok := s.findSeries(req.Series)
+	if !ok {
+		writeError(w, http.StatusNotFound, errors.New("no such series in the library"))
+		return
+	}
+	var cbzs []LibraryFile
+	for _, f := range files {
+		if f.Format == "cbz" {
+			cbzs = append(cbzs, f)
+		}
+	}
+	s.convertMu.Lock()
+	defer s.convertMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), convertTimeout)
+	defer cancel()
+	report := s.progressFor(req.ProgressID)
+	res := convertResult{Series: req.Series, Output: req.Series, Notes: []string{}}
+	for n, f := range cbzs {
+		report(n, len(cbzs), f.Name)
+		if ctx.Err() != nil {
+			res.Notes = append(res.Notes, "stopped: "+ctx.Err().Error())
+			break
+		}
+		src := filepath.Join(s.cfg.LibraryDir, req.Series, f.Name)
+		dst := filepath.Join(s.cfg.LibraryDir, req.Series, strings.TrimSuffix(f.Name, filepath.Ext(f.Name))+".azw3")
+		if err := writeAZW3(src, dst, req.Series, req.LeftToRight); err != nil {
+			res.Failed++
+			res.Notes = append(res.Notes, fmt.Sprintf("%v: %v", f.Name, err))
+			continue
+		}
+		res.Converted++
+	}
+	report(len(cbzs), len(cbzs), "")
+	writeJSON(w, http.StatusOK, res)
+}
+
+// writeAZW3 turns the pictures of a CBZ into a fixed layout AZW3.
+func writeAZW3(src, dst, series string, ltr bool) error {
+	var pages []image.Image
+	cover := cbz.CoverIndex(src)
+	var coverImg image.Image
+	if err := eachPage(src, func(i int, img image.Image) {
+		if img == nil {
+			return
+		}
+		pages = append(pages, img)
+		if i == cover {
+			coverImg = img
+		}
+	}); err != nil {
+		return err
+	}
+	if len(pages) == 0 {
+		return errors.New("no readable pictures")
+	}
+	title := series + ": " + strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))
+	book := kindle.BookFromImages(title, nil, coverImg, pages, ltr)
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".azw3-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) //nolint:errcheck
+	if err := book.Realize().Write(tmp); err != nil {
+		tmp.Close() //nolint:errcheck
+		return fmt.Errorf("write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmp.Name(), dst)
+}

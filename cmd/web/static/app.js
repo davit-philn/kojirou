@@ -1156,7 +1156,9 @@ async function libraryPage() {
       h("div", { class: "row", style: "margin-top:.75rem;align-items:flex-end" },
         h("label", { class: "field" }, h("span", null, "Xem trước truyện"), seriesSelect),
         h("button", { class: "btn", onclick: preview }, "Xem trước 4 trang đầu"),
-        h("button", { class: "btn primary", onclick: () => runConvert(cbzSeries.filter((x) => !isConverted(x.name))) }, "Chuyển tất cả truyện")),
+        h("button", { class: "btn primary", onclick: () => runConvert(cbzSeries.filter((x) => !isConverted(x.name))) }, "Chuyển tất cả truyện"),
+        h("button", { class: "btn", title: "Cho Kindle không mở được CBZ: tạo file .azw3 từ các CBZ (nên dùng CBZ đã chỉnh cho máy)", onclick: () => runMobi(cbzSeries) }, "Tạo AZW3 từ CBZ"),
+        check("ltr", "AZW3 đọc từ trái sang phải")),
       previewOut);
   }
 
@@ -1248,6 +1250,37 @@ async function libraryPage() {
       }
     }
     status.textContent = stopped ? "Đã dừng." : `Xong. Đã chuyển ${converted} tập. Bấm “Làm mới” để thấy các truyện mới trong thư viện.`;
+    if (!stopped) bar.done();
+    cancelButton.hidden = true; stop = null;
+  }
+
+  // Writes an AZW3 (the Kindle's own format) next to the CBZ files.
+  async function runMobi(list) {
+    if (list.length === 0) { toast("Thư viện chưa có file CBZ nào", { bad: true }); return; }
+    let stopped = false; let controller = null;
+    stop = () => { stopped = true; if (controller) controller.abort(); };
+    cancelButton.hidden = false;
+    convertResults.hidden = false;
+    const status = h("p", { class: "muted" });
+    const bar = progressBar();
+    const rows = h("div");
+    convertResults.replaceChildren(h("strong", null, "Tạo file AZW3 cho Kindle"), status, bar.el, rows);
+    let made = 0;
+    for (let i = 0; i < list.length && !stopped; i++) {
+      status.textContent = `Đang tạo ${i + 1}/${list.length}: ${list[i].name}… (mất vài phút với truyện dài)`;
+      controller = new AbortController();
+      try {
+        const res = await tracked("/api/library/mobi", { method: "POST", timeout: 1900000, signal: controller.signal,
+          body: { series: list[i].name, leftToRight: !!ks.ltr } }, bar, i, list.length);
+        made += res.converted;
+        rows.append(h("div", { class: "notice" }, `${list[i].name}: ${res.converted} file AZW3${res.failed ? `, ${res.failed} lỗi` : ""}`,
+          (res.notes || []).length ? h("ul", { class: "small muted", style: "margin:.2rem 0" }, res.notes.map((n) => h("li", null, n))) : null));
+      } catch (err) {
+        if (err.name === "AbortError") break;
+        rows.append(h("div", { class: "notice" }, `${list[i].name}: ${err.message}`));
+      }
+    }
+    status.textContent = stopped ? "Đã dừng." : `Xong. Đã tạo ${made} file AZW3 (nằm cạnh file CBZ). Bấm “Làm mới” để thấy.`;
     if (!stopped) bar.done();
     cancelButton.hidden = true; stop = null;
   }
@@ -1463,6 +1496,7 @@ async function libraryPage() {
       hasCbz(series) ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
       hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
       hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null,
+      hasCbz(series) ? h("button", { class: "btn small", title: "Tạo file .azw3 cho Kindle không mở được CBZ", onclick: () => runMobi([series]) }, "Tạo AZW3") : null,
       backups ? h("button", { class: "btn small", title: "Trả cả truyện về như trước khi sửa", onclick: async () => {
         if (!confirm(`Khôi phục ${backups} file của “${series.name}” về bản trước khi sửa?`)) return;
         if (await call("/api/library/backup", { series: series.name, action: "restore" }, (o) => `Đã khôi phục ${o.done} file`)) render();

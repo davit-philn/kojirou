@@ -1918,3 +1918,20 @@ func TestCuttingAdvertisementsKeepsABackup(t *testing.T) {
 		t.Errorf("restored file has %d pages, want 4", n)
 	}
 }
+
+func TestMakeAZW3FromTheCBZFilesOfASeries(t *testing.T) {
+	e := newEnv(t, nil)
+	makeCBZ(t, filepath.Join(e.library, "Mobi", "0001.cbz"), 1, 2, 3)
+	res := decode[convertResult](t, e.do("POST", "/api/library/mobi", map[string]any{"series": "Mobi"}))
+	if res.Converted != 1 || res.Failed != 0 {
+		t.Fatalf("%+v", res)
+	}
+	data, err := os.ReadFile(filepath.Join(e.library, "Mobi", "0001.azw3"))
+	if err != nil || len(data) < 100 || string(data[60:68]) != "BOOKMOBI" {
+		t.Fatalf("not an AZW3: %v (%d bytes)", err, len(data))
+	}
+	list := decode[[]LibrarySeries](t, e.do("GET", "/api/library", nil))
+	if len(list[0].Files) != 2 {
+		t.Errorf("files = %+v", list[0].Files)
+	}
+}
