@@ -202,3 +202,5 @@ pre.result { background: var(--surface-2); padding: .75rem; border-radius: 8px; 
 .preview-pair figure > img { height: 240px; border-radius: 4px; display: block; background: #eee; }
 .kindle-frame { border: 9px solid #1c1c1c; border-radius: 14px; background: #fff; display: inline-block; }
 .kindle-frame img { height: 222px; display: block; }
+
+.progress-line { display: grid; gap: .25rem; margin: .5rem 0; }

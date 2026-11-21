@@ -1013,6 +1013,50 @@ function jobCard(job) {
     visible.length ? h("div", { class: "steps" }, visible.map(stepRow)) : null);
 }
 
+// A progress bar with a caption: set(fraction, text) with fraction 0..1, or null while unknown.
+function progressBar() {
+  const fill = h("i", { style: "width:0%" });
+  const bar = h("div", { class: "bar indeterminate", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100" }, fill);
+  const text = h("span", { class: "muted small" });
+  const el = h("div", { class: "progress-line" }, bar, text);
+  return {
+    el,
+    set(fraction, caption) {
+      const known = fraction !== null && fraction !== undefined;
+      bar.classList.toggle("indeterminate", !known);
+      if (known) {
+        const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+        fill.style.width = pct + "%";
+        bar.setAttribute("aria-valuenow", String(pct));
+        text.textContent = `${pct}%${caption ? " — " + caption : ""}`;
+      } else text.textContent = caption || "";
+    },
+    done(caption) { bar.classList.remove("indeterminate"); bar.classList.add("done"); fill.style.width = "100%"; text.textContent = caption || "Xong"; },
+  };
+}
+
+// Runs a long request of the library and shows how far the server has come:
+// the page asks /api/progress while it waits. part and parts place this request
+// inside a bigger piece of work (item part of parts).
+async function tracked(path, options, bar, part = 0, parts = 1) {
+  const id = "p" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+  options.body = Object.assign({}, options.body, { progressId: id });
+  let alive = true;
+  const poll = async () => {
+    while (alive) {
+      await new Promise((r) => setTimeout(r, 700));
+      if (!alive) return;
+      try {
+        const p = await api("/api/progress/" + id, { timeout: 5000 });
+        if (p && p.total > 0) bar.set((part + p.done / p.total) / parts, p.label || "");
+        else if (p && p.label) bar.set(part / parts || null, p.label);
+      } catch (_) { /* the next try will do */ }
+    }
+  };
+  poll();
+  try { return await api(path, options); } finally { alive = false; }
+}
+
 function stepRow(s) {
   const known = s.total > 0;
   const pct = known ? Math.min(100, Math.round((s.current / s.total) * 100)) : 0;
@@ -1058,7 +1102,7 @@ async function libraryPage() {
   const adsResults = h("div", { class: "panel", hidden: true });
   const isConverted = (name) => { const m = /\s\[([^\]]+)\]$/.exec(name); return !!m && (m[1] === "converted" || devices.some((d) => d.id === m[1])); };
   const cbzSeries = lib.filter((x) => x.files.some((f) => f.format === "cbz"));
-  const ks = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", enhance: true, autocrop: true }, store.get("kindle", {}));
+  const ks = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", enhance: false, autocrop: true }, store.get("kindle", {}));
   const saveKs = () => store.set("kindle", ks);
   let stop = null; // set while an update runs: aborts it
   const updateAll = h("button", { class: "btn primary", onclick: () => runUpdate(lib.filter((x) => x.files.some((f) => f.format === "cbz"))) }, "Cập nhật ảnh bìa cho tất cả");
@@ -1111,15 +1155,17 @@ async function libraryPage() {
     if (list.length === 0) { toast("Thư viện chưa có file CBZ nào", { bad: true }); return; }
     adsResults.hidden = false;
     const status = h("p", { class: "muted" });
+    const bar = progressBar();
     const rows = h("div");
-    adsResults.replaceChildren(h("strong", null, "Dọn quảng cáo"), status, rows);
+    adsResults.replaceChildren(h("strong", null, "Dọn quảng cáo"), status, bar.el, rows);
     for (let i = 0; i < list.length; i++) {
       status.textContent = `Đang quét ${i + 1}/${list.length}: ${list[i].name}… (quét mọi trang nên có thể mất vài phút)`;
       try {
-        const res = await api("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: list[i].name } });
+        const res = await tracked("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: list[i].name } }, bar, i, list.length);
         rows.append(adsRow(list[i], res));
       } catch (err) { rows.append(h("div", { class: "notice" }, `${list[i].name}: ${err.message}`)); }
     }
+    bar.done();
     status.textContent = "Xong. Kiểm tra ảnh trước/sau rồi bấm “Cắt quảng cáo” ở truyện nào đúng.";
   }
 
@@ -1130,8 +1176,10 @@ async function libraryPage() {
     const page = h("input", { type: "number", min: "1", value: "1", style: "width:5rem", "aria-label": "Số trang" });
     const go = h("button", { class: "btn small", onclick: async () => {
       go.disabled = true;
+      const pb = progressBar();
+      box.append(pb.el);
       try {
-        const out = await api("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: series.name, markFile: file.value, markPage: Number(page.value) } });
+        const out = await tracked("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: series.name, markFile: file.value, markPage: Number(page.value) } }, pb);
         box.replaceChildren(adsRow(series, out));
       } catch (err) { go.disabled = false; toast(err.message, { bad: true }); }
     } }, "Đánh dấu là quảng cáo");
@@ -1147,8 +1195,10 @@ async function libraryPage() {
     }
     const apply = h("button", { class: "btn primary small", onclick: async () => {
       apply.disabled = true;
+      const pb = progressBar();
+      box.append(pb.el);
       try {
-        const out = await api("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: series.name, apply: true } });
+        const out = await tracked("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: series.name, apply: true } }, pb);
         box.replaceChildren(...nodes(`${series.name}: đã xử lý quảng cáo ở ${res.pages} trang (${res.files.length} tập)${res.dropped ? `, trong đó xoá ${res.dropped} trang quảng cáo nguyên trang` : ""}.`,
           (out.notes || []).length ? h("ul", { class: "small muted" }, out.notes.map((n) => h("li", null, n))) : null));
         if (typeof refreshCovers === "function") refreshCovers();
@@ -1169,15 +1219,16 @@ async function libraryPage() {
     cancelButton.hidden = false;
     convertResults.hidden = false;
     const status = h("p", { class: "muted" });
+    const bar = progressBar();
     const rows = h("div");
-    convertResults.replaceChildren(h("strong", null, "Chuyển cho máy đọc"), status, rows);
+    convertResults.replaceChildren(h("strong", null, "Chuyển cho máy đọc"), status, bar.el, rows);
     let converted = 0;
     for (let i = 0; i < list.length && !stopped; i++) {
       status.textContent = `Đang chuyển ${i + 1}/${list.length}: ${list[i].name}… (mất vài phút với truyện dài)`;
       controller = new AbortController();
       try {
-        const res = await api("/api/library/convert", { method: "POST", timeout: 1900000, signal: controller.signal,
-          body: { series: list[i].name, device: ks.device, fitMode: ks.fitMode, widepage: ks.widepage, enhance: ks.enhance, autocrop: ks.autocrop } });
+        const res = await tracked("/api/library/convert", { method: "POST", timeout: 1900000, signal: controller.signal,
+          body: { series: list[i].name, device: ks.device, fitMode: ks.fitMode, widepage: ks.widepage, enhance: ks.enhance, autocrop: ks.autocrop } }, bar, i, list.length);
         converted += res.converted;
         rows.append(h("div", { class: "notice" }, `${list[i].name}: ${res.converted} tập → thư mục “${res.output}”${res.failed ? `, ${res.failed} lỗi` : ""}`,
           (res.notes || []).length ? h("ul", { class: "small muted", style: "margin:.2rem 0" }, res.notes.map((n) => h("li", null, n))) : null));
@@ -1187,6 +1238,7 @@ async function libraryPage() {
       }
     }
     status.textContent = stopped ? "Đã dừng." : `Xong. Đã chuyển ${converted} tập. Bấm “Làm mới” để thấy các truyện mới trong thư viện.`;
+    if (!stopped) bar.done();
     cancelButton.hidden = true; stop = null;
   }
 
@@ -1201,16 +1253,17 @@ async function libraryPage() {
     updateAll.disabled = true; cancelButton.hidden = false;
     results.hidden = false;
     const status = h("p", { class: "muted" });
+    const bar = progressBar();
     const rows = h("div");
-    results.replaceChildren(h("strong", null, "Cập nhật ảnh bìa"), status, rows);
+    results.replaceChildren(h("strong", null, "Cập nhật ảnh bìa"), status, bar.el, rows);
     let updated = 0;
     for (let i = 0; i < list.length && !stopped; i++) {
       const series = list[i];
       status.textContent = `Đang xử lý ${i + 1}/${list.length}: ${series.name}… (có thể mất một lúc)`;
       controller = new AbortController();
       try {
-        const res = await api("/api/library/covers", { method: "POST", timeout: 700000, signal: controller.signal,
-          body: Object.assign({ series: series.name }, extra && list.length === 1 ? extra : {}) });
+        const res = await tracked("/api/library/covers", { method: "POST", timeout: 700000, signal: controller.signal,
+          body: Object.assign({ series: series.name }, extra && list.length === 1 ? extra : {}) }, bar, i, list.length);
         updated += res.updated;
         rows.append(resultRow(series, res));
       } catch (err) {
@@ -1219,6 +1272,7 @@ async function libraryPage() {
       }
     }
     status.textContent = stopped ? "Đã dừng." : `Xong. Đã ghi bìa mới vào ${updated} tập.`;
+    if (!stopped) bar.done();
     updateAll.disabled = false; cancelButton.hidden = true; stop = null;
     if (updated > 0) refreshCovers();
   }

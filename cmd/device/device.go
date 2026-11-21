@@ -286,11 +286,17 @@ func sharpen(g *image.Gray) *image.Gray {
 		x, y = clamp(x, 0, w-1), clamp(y, 0, h-1)
 		return int(g.Pix[y*g.Stride+x])
 	}
-	const amount = 0.6
+	// Gentle, and only on real edges: scans are full of speckle and halftone
+	// dots, and a strong mask turns those into a harsh, rough picture.
+	const amount, floor = 0.3, 40
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			c := at(x, y)
 			edge := 4*c - at(x-1, y) - at(x+1, y) - at(x, y-1) - at(x, y+1)
+			if edge > -floor && edge < floor {
+				out.Pix[y*out.Stride+x] = uint8(c)
+				continue
+			}
 			out.Pix[y*out.Stride+x] = uint8(clamp(c+int(amount*float64(edge)), 0, 255))
 		}
 	}

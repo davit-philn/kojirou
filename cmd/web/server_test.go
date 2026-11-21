@@ -1728,3 +1728,30 @@ func TestAPageMarkedAsAnAdvertisementIsFoundAndRemoved(t *testing.T) {
 		t.Errorf("%d pictures left, want 2", len(zr.File))
 	}
 }
+
+func TestLongLibraryOperationsReportProgress(t *testing.T) {
+	e := newEnv(t, nil)
+	dir := filepath.Join(e.library, "Prog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"0001.cbz", "0002.cbz"} {
+		f, _ := os.Create(filepath.Join(dir, n))
+		zw := zip.NewWriter(f)
+		w, _ := zw.Create("00000.png")
+		_ = png.Encode(w, bannerPage(1, ""))
+		_ = zw.Close()
+		f.Close() //nolint:errcheck
+	}
+	rec := e.do("POST", "/api/library/convert", map[string]any{"series": "Prog", "device": "kindle-pw3", "progressId": "abc123"})
+	if rec.Code != 200 {
+		t.Fatalf("convert: %d %s", rec.Code, rec.Body)
+	}
+	got := decode[progressState](t, e.do("GET", "/api/progress/abc123", nil))
+	if got.Total != 2 || got.Done != 2 {
+		t.Errorf("progress = %+v, want 2 of 2", got)
+	}
+	if none := decode[progressState](t, e.do("GET", "/api/progress/unknown", nil)); none.Total != 0 {
+		t.Errorf("unknown id: %+v", none)
+	}
+}

@@ -356,3 +356,5 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 [MIT](./LICENSE) © Leo Gaskin 2020-2026
 
 Converting for a device never converts a converted copy (folders named `… [kindle-pw3]`); "Chuyển tất cả truyện" skips them.
+
+Long operations of the library (cover update, device conversion, advert scan and cutting) show a progress bar with the file being worked on. "Làm rõ cho màn e-ink" is gentle and off by default; converting an already converted copy used to apply it again and again and made pages rough.

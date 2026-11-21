@@ -91,8 +91,9 @@ type adsRequest struct {
 	// MarkFile and MarkPage (counted from 1) point at a page that is an
 	// advertisement as a whole; it is remembered so that every page that looks
 	// like it is found.
-	MarkFile string `json:"markFile,omitempty"`
-	MarkPage int    `json:"markPage,omitempty"`
+	MarkFile   string `json:"markFile,omitempty"`
+	MarkPage   int    `json:"markPage,omitempty"`
+	ProgressID string `json:"progressId"`
 }
 
 type adsFile struct {
@@ -181,6 +182,12 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 		}
 	}
 
+	report := s.progressFor(req.ProgressID)
+	steps := len(files)
+	if req.Apply {
+		steps *= 2
+	}
+
 	// 1. Reduce every page of every file to what is needed to compare them.
 	var refs []pageRef
 	analysed := make([]*adstrip.Page, 0)
@@ -188,6 +195,7 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		report(fi, steps, "Đang quét "+f.Name)
 		path := filepath.Join(s.cfg.LibraryDir, req.Series, f.Name)
 		i := 0
 		if err := eachPage(path, func(img image.Image) {
@@ -248,12 +256,14 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 	}
 
 	if !req.Apply {
+		report(steps, steps, "")
 		return res, nil
 	}
 
 	// 5. Cut them off, rewriting only the pages that change.
-	for _, fi := range fileIndexes {
+	for n, fi := range fileIndexes {
 		name := files[fi].Name
+		report(len(files)+n*len(files)/max(len(fileIndexes), 1), steps, "Đang cắt "+name)
 		path := filepath.Join(s.cfg.LibraryDir, req.Series, name)
 		if info, err := os.Stat(path); err != nil || (time.Since(info.ModTime()) < recentlyWritten && !s.writtenByUs(path, info.ModTime())) {
 			res.Notes = append(res.Notes, name+": skipped (it is being written)")
@@ -273,6 +283,7 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 		}
 	}
 	_ = s.ads.Add(key, strips)
+	report(steps, steps, "")
 
 	return res, nil
 }

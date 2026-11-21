@@ -28,8 +28,9 @@ const (
 type libraryCoversRequest struct {
 	Series string `json:"series"`
 	// MangaDexID or a MangaDex link; empty means the remembered one or a search by name.
-	MangaDex  string `json:"mangadex"`
-	CoverPage string `json:"coverPage"`
+	MangaDex   string `json:"mangadex"`
+	CoverPage  string `json:"coverPage"`
+	ProgressID string `json:"progressId"`
 }
 
 type libraryCoversResult struct {
@@ -118,6 +119,9 @@ func (s *Server) updateSeriesCovers(ctx context.Context, req libraryCoversReques
 		coverPage = meta.CoverPage
 	}
 
+	report := s.progressFor(req.ProgressID)
+	report(0, 0, "Đang tìm ảnh bìa…")
+
 	// Which volumes does the series have, and what is its name?
 	volumes := map[string]string{} // volume number -> file name
 	for _, f := range files {
@@ -188,8 +192,9 @@ func (s *Server) updateSeriesCovers(ctx context.Context, req libraryCoversReques
 	}
 
 	failures := 0
-	for _, volume := range sortedVolumes(volumes) {
+	for n, volume := range sortedVolumes(volumes) {
 		name := volumes[volume]
+		report(n, len(volumes), name)
 		if failures >= 2 {
 			res.Skipped++
 			continue
@@ -228,6 +233,7 @@ func (s *Server) updateSeriesCovers(ctx context.Context, req libraryCoversReques
 		res.Updated++
 	}
 
+	report(len(volumes), len(volumes), "")
 	switch {
 	case res.Updated > 0 && res.Skipped == 0:
 		res.Status = "updated"

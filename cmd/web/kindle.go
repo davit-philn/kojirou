@@ -197,7 +197,8 @@ func readPage(path string, n int) (image.Image, error) {
 }
 
 type convertRequest struct {
-	Series string `json:"series"`
+	Series     string `json:"series"`
+	ProgressID string `json:"progressId"`
 	pageSettings
 }
 
@@ -258,10 +259,21 @@ func (s *Server) handleLibraryConvert(w http.ResponseWriter, r *http.Request) {
 	defer s.convertMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), convertTimeout)
 	defer cancel()
+	report := s.progressFor(req.ProgressID)
+	total := 0
+	for _, f := range files {
+		if f.Format == "cbz" {
+			total++
+		}
+	}
+	report(0, total, "")
+	doneFiles := 0
 	for _, f := range files {
 		if f.Format != "cbz" {
 			continue
 		}
+		report(doneFiles, total, f.Name)
+		doneFiles++
 		if ctx.Err() != nil {
 			res.Notes = append(res.Notes, "stopped: "+ctx.Err().Error())
 			break
@@ -279,6 +291,7 @@ func (s *Server) handleLibraryConvert(w http.ResponseWriter, r *http.Request) {
 		}
 		res.Converted++
 	}
+	report(total, total, "")
 	if res.Converted == 0 && res.Failed == 0 {
 		_ = os.Remove(filepath.Join(s.cfg.LibraryDir, outName))
 	}

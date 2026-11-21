@@ -78,6 +78,7 @@ type Server struct {
 	// coversMu lets one cover update rewrite files at a time.
 	coversMu  sync.Mutex
 	convertMu sync.Mutex
+	progress  progressStore
 	writtenMu sync.Mutex
 	written   map[string]time.Time
 }
@@ -150,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/library/{series}/{file}/preview", s.handleLibraryPreview)
 	mux.HandleFunc("POST /api/library/convert", s.handleLibraryConvert)
 	mux.HandleFunc("POST /api/library/ads", s.handleLibraryAds)
+	mux.HandleFunc("GET /api/progress/{id}", s.handleProgress)
 	mux.HandleFunc("POST /api/preview", s.handlePreview)
 	mux.HandleFunc("GET /api/sources", s.handleListSources)
 	mux.HandleFunc("POST /api/sources", s.handleSaveSource)
