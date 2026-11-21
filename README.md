@@ -386,3 +386,5 @@ Under the chapter table, **Tải truyện từ các nguồn này** downloads the
 ### Pages
 
 The menu has three pages: **Tìm truyện** (search every source at once, paste a link, or browse one source), **Thư viện** (the queue of downloads is shown at the top while there is one, then the downloaded series) and **Nguồn** (your websites).
+
+The library keeps each series to one line: the cover, the name, **Chuyển cho Kindle**, a **Thêm ▾** menu (covers, advert cleaning, AZW3, copying to a reader, backups, rename, delete) and the list of volumes (folded away above three), each with **Xem trang**, **Tải về** and a **⋯** menu. Library-wide actions are under **Công cụ ▾**. The **Nguồn** page lists your websites (edit or delete), adds a new one from its home page, and keeps the manual settings, the selector help and the JSON paste under *Nâng cao*.

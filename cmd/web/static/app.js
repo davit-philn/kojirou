@@ -1297,6 +1297,18 @@ function multiBlock(config, params) {
   return root;
 }
 
+// A small drop-down menu: items are [text, action, danger?]; null items are left out.
+function menu(label, items, cls = "btn small") {
+  const box = h("details", { class: "menu" });
+  box.append(h("summary", { class: cls }, label),
+    h("div", { class: "menu-list" }, items.filter(Boolean).map(([text, action, danger]) =>
+      h("button", { class: "menu-item" + (danger ? " danger" : ""), type: "button", onclick: () => { box.open = false; action(); } }, text))));
+  return box;
+}
+document.addEventListener("click", (e) => {
+  for (const m of document.querySelectorAll("details.menu[open]")) if (!m.contains(e.target)) m.open = false;
+});
+
 // ---------- library ----------
 
 // Changes after the covers of the library were updated, so that the browser asks for the new pictures.
@@ -1316,14 +1328,17 @@ async function libraryPage() {
   const ks = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", enhance: false, autocrop: true }, store.get("kindle", {}));
   const saveKs = () => store.set("kindle", ks);
   let stop = null; // set while an update runs: aborts it
-  const updateAll = h("button", { class: "btn primary", onclick: () => runUpdate(lib.filter((x) => x.files.some((f) => f.format === "cbz"))) }, "Cập nhật ảnh bìa cho tất cả");
   const cancelButton = h("button", { class: "btn danger small", hidden: true, onclick: () => stop && stop() }, "Dừng");
+  const kp = kindlePanel();
+  kp.hidden = true; // opened from the Công cụ menu
+  const tools = menu("Công cụ ▾", [
+    ["Cập nhật ảnh bìa cho tất cả truyện", () => runUpdate(cbzSeries)],
+    ["Dọn quảng cáo cho tất cả truyện", () => scanAds(cbzSeries)],
+    ["Chuyển cho máy đọc / tạo AZW3…", () => { kp.hidden = false; kp.open = true; kp.scrollIntoView({ behavior: "smooth", block: "center" }); }],
+  ], "btn");
   app.append(h("h1", null, "Thư viện"), downloads.el, finished,
-    h("p", { class: "muted" }, "Thư mục lưu trên máy: ", h("code", null, cfg.library), " ", refresh),
-    h("div", { class: "row", style: "margin-bottom:1rem" }, updateAll,
-      h("button", { class: "btn", onclick: () => scanAds(lib.filter((x) => x.files.some((f) => f.format === "cbz"))) }, "Dọn quảng cáo cho tất cả"), cancelButton,
-      h("span", { class: "muted small" }, "Tìm bìa đúng từng tập trên MangaDex (theo tên truyện) và ghi vào file .cbz, không tải lại truyện.")),
-    results, kindlePanel(), convertResults, adsResults);
+    h("div", { class: "row", style: "align-items:center;margin-bottom:.5rem" }, refresh, tools, cancelButton),
+    results, kp, convertResults, adsResults);
   if (lib.length === 0) {
     app.append(h("div", { class: "empty" }, "Thư viện đang trống. Các tập đã tải sẽ hiện ở đây."));
     return () => downloads.stop();
@@ -1494,7 +1509,7 @@ async function libraryPage() {
     let stopped = false;
     let controller = null;
     stop = () => { stopped = true; if (controller) controller.abort(); };
-    updateAll.disabled = true; cancelButton.hidden = false;
+    cancelButton.hidden = false;
     results.hidden = false;
     const status = h("p", { class: "muted" });
     const bar = progressBar();
@@ -1517,7 +1532,7 @@ async function libraryPage() {
     }
     status.textContent = stopped ? "Đã dừng." : `Xong. Đã ghi bìa mới vào ${updated} tập.`;
     if (!stopped) bar.done();
-    updateAll.disabled = false; cancelButton.hidden = true; stop = null;
+    cancelButton.hidden = true; stop = null;
     if (updated > 0) refreshCovers();
   }
 
@@ -1646,28 +1661,28 @@ async function libraryPage() {
     return series.files.map((f) => {
       const row = h("div", { class: "file" },
         thumb(series.name, f, "lib-thumb"),
-        h("span", { class: "name" }, f.name, f.hasBackup ? h("span", { class: "chip", title: "Có bản sao lưu trước khi sửa" }, "có sao lưu") : null),
-        h("span", { class: "chip" }, f.format.toUpperCase()),
-        h("span", { class: "muted small" }, formatSize(f.size)),
-        h("span", { class: "muted small" }, formatDate(f.modified)),
+        h("span", { class: "name" }, f.name, " ", h("span", { class: "muted small" }, `${f.format.toUpperCase()} · ${formatSize(f.size)} · ${formatDate(f.modified)}`),
+          f.hasBackup ? h("span", { class: "chip", title: "Có bản sao lưu trước khi sửa" }, "có sao lưu") : null),
         f.format === "cbz" ? h("button", { class: "btn small", onclick: () => {
           const open = host.querySelector(".pages-panel");
           if (open) open.remove();
           row.after(pagesPanel(series, f));
         } }, "Xem trang") : null,
-        f.hasBackup ? h("button", { class: "btn small", title: "Trả file về như trước khi sửa", onclick: async () => {
-          if (!confirm(`Khôi phục ${f.name} về bản trước khi sửa?`)) return;
-          if (await call("/api/library/backup", { series: series.name, file: f.name, action: "restore" }, () => "Đã khôi phục")) render();
-        } }, "Khôi phục") : null,
-        h("button", { class: "btn small", onclick: async () => {
-          const name = prompt("Tên file mới", f.name.replace(/\.[^.]+$/, ""));
-          if (name && name.trim() && await call("/api/library/rename", { series: series.name, file: f.name, name: name.trim() }, () => "Đã đổi tên")) render();
-        } }, "Đổi tên"),
-        h("button", { class: "btn small danger", onclick: async () => {
-          if (!confirm(`Xoá ${f.name} (${formatSize(f.size)}) khỏi thư viện? Không thể hoàn tác.`)) return;
-          if (await call("/api/library/delete", { series: series.name, file: f.name }, () => "Đã xoá")) render();
-        } }, "Xoá"),
-        h("a", { class: "btn small primary", download: "", href: `/api/library/${encodeURIComponent(series.name)}/${encodeURIComponent(f.name)}` }, "Tải về"));
+        h("a", { class: "btn small primary", download: "", href: `/api/library/${encodeURIComponent(series.name)}/${encodeURIComponent(f.name)}` }, "Tải về"),
+        menu("⋯", [
+          f.hasBackup ? ["Khôi phục bản trước khi sửa", async () => {
+            if (!confirm(`Khôi phục ${f.name} về bản trước khi sửa?`)) return;
+            if (await call("/api/library/backup", { series: series.name, file: f.name, action: "restore" }, () => "Đã khôi phục")) render();
+          }] : null,
+          ["Đổi tên", async () => {
+            const name = prompt("Tên file mới", f.name.replace(/\.[^.]+$/, ""));
+            if (name && name.trim() && await call("/api/library/rename", { series: series.name, file: f.name, name: name.trim() }, () => "Đã đổi tên")) render();
+          }],
+          ["Xoá tập này", async () => {
+            if (!confirm(`Xoá ${f.name} (${formatSize(f.size)}) khỏi thư viện? Không thể hoàn tác.`)) return;
+            if (await call("/api/library/delete", { series: series.name, file: f.name }, () => "Đã xoá")) render();
+          }, true],
+        ]));
       return row;
     });
   }
@@ -1684,52 +1699,60 @@ async function libraryPage() {
       go.disabled = false;
       if (out && (out.notes || []).length) toast(out.notes.join("; "), { bad: true });
     } }, "Chép vào máy");
-    return h("details", { class: "panel" }, h("summary", null, "Chép sang máy đọc (Kindle, USB…)"),
+    return h("div", { class: "panel" },
       h("div", { class: "row", style: "align-items:center" }, dest, go),
-      h("p", { class: "muted small" }, "Cắm máy vào máy tính, nhập thư mục (vd E:\\documents). Mỗi truyện được chép vào một thư mục con riêng."));
+      h("p", { class: "muted small" }, "Cắm máy vào máy tính rồi nhập thư mục (vd E:\\documents). Mỗi truyện được chép vào một thư mục con riêng."));
   }
+
+  // The list of files, folded away when there are many.
+  const filesBox = (series, host) => h("details", { class: "files", open: series.files.length <= 3 },
+    h("summary", null, `${series.files.length} tập · ${formatSize(total(series))}`), ...fileRows(series, host));
 
   function seriesBlock(series, variants) {
     const block = h("section", { class: "series-block lib-series" });
     const body = h("div", { class: "lib-body" });
+    const extra = h("div"); // panels opened from the menu
+    const show = (node) => extra.replaceChildren(node);
     const backups = series.files.filter((f) => f.hasBackup).length;
-    const buttons = [
-      hasCbz(series) ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
-      hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
-      hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null,
-      series.source ? h("a", { class: "btn small", title: "Mở trang truyện để xem và tải các tập mới", href: series.source === "multi" ? "#/?" + new URLSearchParams({ q: series.sourceId }) : "#/series?" + new URLSearchParams({ source: series.source, id: series.sourceId, lang: store.get("browse", {}).lang || "en" }) }, "Tập mới?") : null,
-      hasCbz(series) ? h("button", { class: "btn small", title: "Tạo file .azw3 cho Kindle không mở được CBZ", onclick: () => runMobi([series]) }, "Tạo AZW3") : null,
-      backups ? h("button", { class: "btn small", title: "Trả cả truyện về như trước khi sửa", onclick: async () => {
-        if (!confirm(`Khôi phục ${backups} file của “${series.name}” về bản trước khi sửa?`)) return;
-        if (await call("/api/library/backup", { series: series.name, action: "restore" }, (o) => `Đã khôi phục ${o.done} file`)) render();
-      } }, "Khôi phục bản gốc") : null,
-      backups ? h("button", { class: "btn small", title: "Xoá các bản sao lưu để lấy lại dung lượng", onclick: async () => {
-        if (!confirm("Xoá các bản sao lưu? Sau đó không khôi phục lại được nữa.")) return;
-        if (await call("/api/library/backup", { series: series.name, action: "discard" }, (o) => `Đã xoá ${o.done} bản sao lưu`)) render();
-      } }, "Xoá sao lưu") : null,
-      h("button", { class: "btn small", onclick: async () => {
-        const name = prompt("Tên truyện mới", series.name);
-        if (name && name.trim() && name.trim() !== series.name && await call("/api/library/rename", { series: series.name, name: name.trim() }, () => "Đã đổi tên")) render();
-      } }, "Đổi tên"),
-      h("button", { class: "btn small danger", onclick: async () => {
-        if (!confirm(`Xoá cả truyện “${series.name}” (${series.files.length} tập, ${formatSize(total(series))}) khỏi thư viện? Không thể hoàn tác.`)) return;
-        if (await call("/api/library/delete", { series: series.name }, (o) => `Đã xoá ${o.done} file, giải phóng ${formatSize(o.bytes)}`)) render();
-      } }, "Xoá truyện"),
-    ];
+    const cbz = hasCbz(series);
+    const original = !isConverted(series.name);
     body.append(h("div", { class: "row", style: "align-items:center" },
-      h("h2", { style: "margin:0" }, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập · ${formatSize(total(series))})`)), ...buttons),
-      hasCbz(series) ? inlineChooser(series) : null,
-      ...fileRows(series, body),
-      hasCbz(series) ? exportBox(series) : null);
+      h("h2", { style: "margin:0" }, series.name),
+      cbz && original ? h("button", { class: "btn small primary", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
+      series.source ? h("a", { class: "btn small", title: "Tìm tập mới của truyện này", href: series.source === "multi" ? "#/?" + new URLSearchParams({ q: series.sourceId }) : "#/series?" + new URLSearchParams({ source: series.source, id: series.sourceId, lang: store.get("browse", {}).lang || "en" }) }, "Tập mới?") : null,
+      menu("Thêm ▾", [
+        cbz ? ["Cập nhật ảnh bìa", () => runUpdate([series])] : null,
+        cbz ? ["Chọn ảnh bìa từ link…", () => show(inlineChooser(series))] : null,
+        cbz && original ? ["Dọn quảng cáo", () => scanAds([series])] : null,
+        cbz ? ["Tạo file AZW3 (Kindle)", () => runMobi([series])] : null,
+        cbz ? ["Chép sang máy đọc…", () => show(exportBox(series))] : null,
+        backups ? [`Khôi phục bản gốc (${backups} file)`, async () => {
+          if (!confirm(`Khôi phục ${backups} file của “${series.name}” về bản trước khi sửa?`)) return;
+          if (await call("/api/library/backup", { series: series.name, action: "restore" }, (o) => `Đã khôi phục ${o.done} file`)) render();
+        }] : null,
+        backups ? ["Xoá các bản sao lưu", async () => {
+          if (!confirm("Xoá các bản sao lưu? Sau đó không khôi phục lại được nữa.")) return;
+          if (await call("/api/library/backup", { series: series.name, action: "discard" }, (o) => `Đã xoá ${o.done} bản sao lưu`)) render();
+        }] : null,
+        ["Đổi tên truyện", async () => {
+          const name = prompt("Tên truyện mới", series.name);
+          if (name && name.trim() && name.trim() !== series.name && await call("/api/library/rename", { series: series.name, name: name.trim() }, () => "Đã đổi tên")) render();
+        }],
+        ["Xoá cả truyện", async () => {
+          if (!confirm(`Xoá cả truyện “${series.name}” (${series.files.length} tập, ${formatSize(total(series))}) khỏi thư viện? Không thể hoàn tác.`)) return;
+          if (await call("/api/library/delete", { series: series.name }, (o) => `Đã xoá ${o.done} file, giải phóng ${formatSize(o.bytes)}`)) render();
+        }, true],
+      ])), extra, filesBox(series, body));
     for (const v of variants || []) {
       body.append(h("details", { class: "panel variant" },
-        h("summary", null, `Bản đã chuyển: ${v.name.slice(series.name.length + 1)} (${v.files.length} tập · ${formatSize(total(v))})`),
+        h("summary", null, `Bản đã chuyển ${v.name.slice(series.name.length + 1)} · ${v.files.length} tập · ${formatSize(total(v))}`),
         h("div", { class: "row", style: "margin:.4rem 0" },
+          h("button", { class: "btn small", onclick: () => show(exportBox(v)) }, "Chép sang máy đọc…"),
           h("button", { class: "btn small danger", onclick: async () => {
             if (!confirm(`Xoá bản “${v.name}” (${formatSize(total(v))})? Truyện gốc vẫn còn.`)) return;
             if (await call("/api/library/delete", { series: v.name }, (o) => `Đã xoá ${o.done} file`)) render();
           } }, "Xoá bản này")),
-        ...fileRows(v, body), exportBox(v)));
+        ...fileRows(v, body)));
     }
     block.append(thumb(series.name, series.files[0], "lib-cover"), body);
     return block;
@@ -1757,7 +1780,8 @@ async function libraryPage() {
   sorter.value = view.sort;
   const allBytes = lib.reduce((n, x) => n + total(x), 0);
   app.append(h("div", { style: "display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.75rem 0" }, search, sorter,
-    h("span", { class: "muted small" }, `${lib.length} thư mục · ${formatSize(allBytes)}`)), list);
+    h("span", { class: "muted small" }, `${lib.length} truyện · ${formatSize(allBytes)}`)), list,
+    h("p", { class: "muted small", style: "margin-top:1.5rem" }, "Thư mục lưu: ", h("code", null, cfg.library)));
   draw();
   return () => downloads.stop();
 }
@@ -1814,12 +1838,13 @@ async function sourcesPage() {
     for (const [key] of SOURCE_FIELDS) inputs[key].value = cfg[key] === undefined || cfg[key] === 0 ? "" : String(cfg[key]);
   }
 
+  const advanced = h("details", { class: "panel" });
   const list = h("div", { class: "src-list" }, saved.length
     ? saved.map((s) => h("div", { class: "src" },
         h("span", { class: "name" }, s.name),
         h("span", { class: "url muted small" }, s.config.base_url || "(không có base_url)"),
-        h("button", { class: "btn small", onclick: () => { name.value = s.name; fillConfig(s.config); window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); } }, "Sửa"),
-        h("button", { class: "btn small", onclick: () => { const st = Object.assign({ lang: "vi", order: "", adult: false }, store.get("browse", {})); st.source = s.name; store.set("browse", st); location.hash = "#/"; } }, "Dùng"),
+        s.config.search_url ? h("span", { class: "chip", title: "Tìm truyện ở trang Tìm truyện được" }, "có tìm kiếm") : h("span", { class: "chip", style: "opacity:.6", title: "Chỉ dùng được khi dán địa chỉ truyện" }, "không tìm kiếm"),
+        h("button", { class: "btn small", onclick: () => { name.value = s.name; fillConfig(s.config); advanced.open = true; advanced.scrollIntoView({ behavior: "smooth", block: "start" }); } }, "Sửa"),
         h("button", { class: "btn small danger", onclick: async () => {
           if (!confirm(`Xoá nguồn “${s.name}”?`)) return;
           try { await api("/api/sources/" + encodeURIComponent(s.name), { method: "DELETE" }); render(); } catch (e) { toast(e.message, { bad: true }); }
@@ -1851,56 +1876,47 @@ async function sourcesPage() {
     }
   }
 
-  const summary = detection ? h("div", { class: "panel" },
-    h("strong", null, `Đã nhận diện và lưu nguồn “${detection.name}”`),
-    h("ul", null,
-      h("li", null, `Trang truyện dùng để kiểm tra: ${detection.seriesUrl} (${detection.chapterCount} chương)`),
-      h("li", null, `Trang chương mẫu: ${detection.chapterUrl} (${detection.imageCount} ảnh)`),
-      h("li", null, h("code", null, `chapter_list_selector: ${detection.config.chapter_list_selector}`)),
-      h("li", null, h("code", null, `image_list_selector: ${detection.config.image_list_selector}`), " · ", h("code", null, `image_attr: ${detection.config.image_attr}`)),
-      detection.notes.map((n) => h("li", { class: "muted" }, n))),
-    detection.seriesCount
-      ? h("p", null, `Nguồn này duyệt được như MangaDex: tìm thấy ${detection.seriesCount} truyện ở trang vừa quét${detection.config.search_url ? ", có cả ô tìm kiếm" : ""}. `,
-          h("button", { class: "btn primary small", onclick: () => {
-            const st = Object.assign({ lang: "vi", order: "", adult: false }, store.get("browse", {}));
-            st.source = detection.name; st.openBrowse = true; store.set("browse", st); location.hash = "#/";
-          } }, "Mở nguồn này ở trang Tìm truyện"))
-      : h("p", null, "Để dùng: vào ", h("a", { href: "#/" }, "Tìm truyện"), `, mở mục Duyệt riêng từng nguồn, chọn nguồn “${detection.name}” rồi dán địa chỉ một truyện của website.`)) : null;
+  const summary = detection ? h("div", { class: "notice", style: "border-color:#2a8a4a" },
+    h("strong", null, `Đã lưu nguồn “${detection.name}”`),
+    ` — thấy ${detection.chapterCount} chương ở truyện mẫu, chương mẫu có ${detection.imageCount} ảnh${detection.config.search_url ? ", có ô tìm kiếm" : ""}. `,
+    "Giờ bạn tìm truyện ở trang ", h("a", { href: "#/" }, "Tìm truyện"), ".",
+    detection.notes && detection.notes.length ? h("ul", { class: "small muted", style: "margin:.3rem 0 0" }, detection.notes.map((n) => h("li", null, n))) : null) : null;
 
-  app.append(
-    h("h1", null, "Nguồn"),
-    h("p", { class: "muted" }, "Ngoài MangaDex, bạn có thể thêm trang web của mình. Chỉ dùng với trang mà điều khoản cho phép tải tự động và nội dung bạn có quyền đọc."),
-    summary,
-    list,
-    h("h2", { style: "margin-top:2rem" }, "Tự nhận diện từ trang chủ"),
-    h("div", { class: "panel" },
-      h("p", { class: "muted small", style: "margin-top:0" },
-        "Chỉ cần địa chỉ trang chủ (hoặc trang của một truyện). Công cụ đọc robots.txt, mở khoảng 3 đến 6 trang, tự tìm danh sách chương, ảnh và thuộc tính ảnh, kiểm tra thử rồi lưu nguồn. Chỉ đọc được HTML thuần, không vượt qua trang kiểm tra trình duyệt (anti-bot)."),
-      h("div", { class: "row" }, h("label", { class: "field grow" }, h("span", null, "Địa chỉ trang chủ"), scanURL)),
-      h("label", { class: "check", style: "margin-top:.6rem" }, rights, "Tôi có quyền dùng nội dung của website này và điều khoản của website cho phép tải tự động"),
-      h("div", { style: "margin-top:.75rem" }, scanButton),
-      scanBox),
-    h("h2", { style: "margin-top:2rem" }, "Thêm hoặc sửa nguồn thủ công"),
-    h("details", { class: "panel" },
+  advanced.append(
+    h("summary", null, "Nâng cao: thêm hoặc sửa nguồn thủ công"),
+    h("details", { style: "margin:.5rem 0" },
       h("summary", null, "Cách tìm selector"),
       h("ol", null,
         h("li", null, "Mở trang liệt kê chương, bấm F12, dùng công cụ chọn phần tử rồi bấm vào tên một chương."),
         h("li", null, "Ghi lại thẻ cha có class đặc trưng, ví dụ ", h("code", null, ".list-chapter a"), "."),
         h("li", null, "Mở một chương, chọn một ảnh và xem URL nằm ở thuộc tính nào (", h("code", null, "src"), ", ", h("code", null, "data-original"), "…)."),
         h("li", null, "Điền vào form rồi bấm Thử. Chỉ đọc được HTML gốc, trang nạp ảnh bằng JavaScript sẽ không dùng được."))),
+    h("label", { class: "field" }, h("span", null, "Tên nguồn"), name),
+    h("div", { class: "options" }, fields),
+    h("details", { style: "margin-top:.75rem" }, h("summary", null, "Dán JSON cấu hình"),
+      pasted,
+      h("button", { class: "btn small", style: "margin-top:.5rem", onclick: () => {
+        try { fillConfig(JSON.parse(pasted.value)); } catch (e) { toast("JSON không hợp lệ: " + e.message, { bad: true }); }
+      } }, "Điền vào form")),
+    h("div", { class: "row", style: "margin-top:1rem" },
+      h("label", { class: "field grow" }, h("span", null, "Thử với trang truyện"), testURL),
+      h("button", { class: "btn", onclick: runTest }, "Thử"),
+      h("button", { class: "btn primary", onclick: save }, "Lưu nguồn")),
+    resultBox);
+
+  app.append(
+    h("h1", null, "Nguồn"),
+    h("p", { class: "muted" }, "Các website của bạn (ngoài MangaDex). Chỉ dùng với trang mà điều khoản cho phép tải tự động và nội dung bạn có quyền đọc."),
+    ...nodes(summary),
+    list,
     h("div", { class: "panel" },
-      h("label", { class: "field" }, h("span", null, "Tên nguồn"), name),
-      h("div", { class: "options" }, fields),
-      h("details", { style: "margin-top:.75rem" }, h("summary", null, "Dán JSON cấu hình"),
-        pasted,
-        h("button", { class: "btn small", style: "margin-top:.5rem", onclick: () => {
-          try { fillConfig(JSON.parse(pasted.value)); } catch (e) { toast("JSON không hợp lệ: " + e.message, { bad: true }); }
-        } }, "Điền vào form")),
-      h("div", { class: "row", style: "margin-top:1rem" },
-        h("label", { class: "field grow" }, h("span", null, "Thử với trang truyện"), testURL),
-        h("button", { class: "btn", onclick: runTest }, "Thử"),
-        h("button", { class: "btn primary", onclick: save }, "Lưu nguồn")),
-      resultBox));
+      h("strong", null, "Thêm nguồn mới"),
+      h("p", { class: "muted small", style: "margin:.25rem 0 .5rem" }, "Chỉ cần địa chỉ trang chủ. Tool tự mở vài trang để tìm danh sách chương và ảnh (tôn trọng robots.txt, không vượt qua trang chống bot)."),
+      h("div", { class: "row" }, h("label", { class: "field grow" }, h("span", null, "Địa chỉ trang chủ"), scanURL)),
+      h("label", { class: "check", style: "margin-top:.6rem" }, rights, "Tôi có quyền dùng nội dung của website này và điều khoản của website cho phép tải tự động"),
+      h("div", { style: "margin-top:.75rem" }, scanButton),
+      scanBox),
+    advanced);
 
   async function runTest(e) {
     const button = e.currentTarget;

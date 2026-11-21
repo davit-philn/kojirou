@@ -224,3 +224,14 @@ pre.result { background: var(--surface-2); padding: .75rem; border-radius: 8px; 
 .multi-table tr.gap td { background: rgba(204, 51, 51, .15); color: #b33; text-align: left; }
 .multi-table td.yes { cursor: pointer; }
 .multi-table td.chosen { background: rgba(42, 138, 74, .22); }
+
+.menu { position: relative; display: inline-block; }
+.menu > summary { list-style: none; cursor: pointer; user-select: none; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu-list { position: absolute; right: 0; z-index: 20; min-width: 15rem; margin-top: .25rem; padding: .25rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.22); display: grid; }
+.menu-item { background: none; border: 0; text-align: left; padding: .45rem .7rem; border-radius: 6px; font: inherit; color: inherit; cursor: pointer; }
+.menu-item:hover { background: var(--surface-2); }
+.menu-item.danger { color: #c33; }
+.files { margin-top: .5rem; }
+.files > summary { cursor: pointer; color: var(--muted); font-size: .9rem; margin-bottom: .25rem; }
+.file .name .chip { margin-left: .4rem; }
