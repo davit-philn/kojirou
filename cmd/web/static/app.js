@@ -113,6 +113,7 @@ const routes = {
   "downloads": downloadsPage,
   "library": libraryPage,
   "sources": sourcesPage,
+  "multi": multiPage,
 };
 
 function parseHash() {
@@ -1098,6 +1099,135 @@ async function pollBadge() {
   } catch (_) { /* server may be restarting */ }
 }
 badgeTimer = setInterval(() => { if (!document.hidden) pollBadge(); }, 3000);
+
+// ---------- search in every source at once ----------
+
+const expandRanges = (ranges) => {
+  const out = new Set();
+  for (const r of ranges || []) {
+    const [a, b = a] = String(r).split("-").map(Number);
+    for (let n = a; n <= b; n++) out.add(n);
+  }
+  return out;
+};
+
+async function multiPage() {
+  const config = await api("/api/config").catch(() => ({ sources: ["mangadex"] }));
+  const view = Object.assign({ q: "", lang: store.get("browse", {}).lang || "vi" }, store.get("multi", {}));
+  const input = h("input", { type: "search", placeholder: "Tên truyện, ví dụ Blue Lock", value: view.q, "aria-label": "Tên truyện" });
+  const lang = h("select", { "aria-label": "Ngôn ngữ chương", style: "width:auto" },
+    [["vi", "Tiếng Việt"], ["en", "English"], ["ja", "日本語"]].map(([v, t]) => h("option", { value: v }, t)));
+  lang.value = view.lang;
+  const status = h("div");
+  const results = h("div");
+  const detail = h("div");
+  const go = h("button", { class: "btn primary", type: "submit" }, "Tìm ở tất cả nguồn");
+  const form = h("form", { style: "display:flex;gap:.5rem;flex-wrap:wrap;align-items:center", onsubmit: (e) => { e.preventDefault(); search(); } },
+    h("div", { style: "flex:1;min-width:14rem" }, input), lang, go);
+  app.append(h("h1", null, "Tìm nhiều nguồn"),
+    h("p", { class: "muted" }, `Tìm một truyện trong cả ${config.sources.length} nguồn (MangaDex và các nguồn của bạn) cùng lúc, gộp danh sách chương và cảnh báo chương nào còn thiếu. Nguồn nào không có ô tìm kiếm sẽ bị bỏ qua, hãy dán địa chỉ truyện của nguồn đó ở trang Duyệt truyện.`),
+    form, status, results, detail);
+
+  async function search() {
+    const text = input.value.trim();
+    if (!text) { toast("Nhập tên truyện", { bad: true }); return; }
+    view.q = text; view.lang = lang.value; store.set("multi", view);
+    go.disabled = true; detail.replaceChildren(); results.replaceChildren();
+    const bar = progressBar();
+    bar.set(null, "Đang tìm ở tất cả nguồn…");
+    status.replaceChildren(bar.el);
+    try {
+      const res = await api("/api/multi/search?" + new URLSearchParams({ q: text, lang: lang.value }), { timeout: 90000 });
+      bar.done(`Đã tìm ${res.sources.length} nguồn, thấy ${res.groups.length} truyện`);
+      status.append(h("div", { class: "row small", style: "margin:.4rem 0;gap:.4rem" }, res.sources.map((s) => h("span", {
+        class: "chip", title: s.error || "",
+        style: s.status === "error" ? "background:#fdd;color:#900" : s.status === "skipped" ? "opacity:.6" : "",
+      }, `${s.source}: ${s.status === "ok" ? s.count + " kết quả" : s.status === "skipped" ? "không có ô tìm kiếm" : "lỗi"}`))));
+      if (res.groups.length === 0) results.append(h("div", { class: "empty" }, "Không nguồn nào thấy truyện này."));
+      for (const g of res.groups) results.append(groupCard(g));
+    } catch (err) { status.replaceChildren(errorBox(err)); }
+    go.disabled = false;
+  }
+
+  const coverOf = (m) => !m.cover ? null : m.source === "mangadex" ? m.cover : "/api/cover?" + new URLSearchParams({ source: m.source, url: m.cover });
+  function groupCard(g) {
+    const picks = g.members.map(() => true);
+    const withCover = g.members.find((m) => m.cover);
+    const card = h("section", { class: "series-block lib-series" },
+      withCover ? h("img", { class: "lib-cover", src: coverOf(withCover), alt: "", loading: "lazy", referrerpolicy: "no-referrer" }) : h("div", { class: "lib-cover none" }, "Không có bìa"),
+      h("div", { class: "lib-body" },
+        h("h2", { style: "margin:0" }, g.title, " ", h("span", { class: "muted small" }, `(${g.sources} nguồn)`)),
+        h("p", { class: "muted small" }, "Bỏ tick nguồn nào không đúng truyện này."),
+        g.members.map((m, i) => h("label", { class: "check", style: "display:flex;gap:.4rem;align-items:center;margin:.15rem 0" },
+          h("input", { type: "checkbox", checked: true, onchange: (e) => { picks[i] = e.target.checked; } }),
+          h("strong", null, m.source), ` — ${m.title} `,
+          m.source === "mangadex" ? null : h("a", { href: m.id, target: "_blank", rel: "noreferrer noopener", class: "small" }, "mở trang"))),
+        h("div", { class: "row", style: "margin-top:.5rem" },
+          h("button", { class: "btn primary", onclick: (e) => chapters(g.members.filter((_, i) => picks[i]), e.target) }, "Xem chương ở các nguồn đã chọn"))));
+    return card;
+  }
+
+  async function chapters(members, button) {
+    if (members.length === 0) { toast("Chọn ít nhất một nguồn", { bad: true }); return; }
+    button.disabled = true;
+    const bar = progressBar();
+    bar.set(null, `Đang lấy danh sách chương ở ${members.length} nguồn…`);
+    detail.replaceChildren(bar.el);
+    detail.scrollIntoView({ behavior: "smooth", block: "start" });
+    try {
+      const res = await api("/api/multi/chapters", { method: "POST", timeout: 150000,
+        body: { members: members.map((m) => ({ source: m.source, id: m.id, title: m.title })), lang: lang.value } });
+      bar.done("Xong");
+      detail.replaceChildren(chapterTable(res));
+    } catch (err) { detail.replaceChildren(errorBox(err)); }
+    button.disabled = false;
+  }
+
+  function chapterTable(res) {
+    const t = res.table;
+    const keys = res.members.filter((m) => !m.error).map((m) => m.key);
+    const gaps = expandRanges(t.gaps);
+    const warn = t.gaps.length
+      ? h("div", { class: "notice", style: "border-color:#c33" }, h("strong", null, "Thiếu chương: "), t.gaps.join(", "), " — không nguồn nào trong số đã chọn có các chương này.")
+      : h("div", { class: "notice", style: "border-color:#2a8a4a" }, t.rows.length ? `Đủ chương liền mạch từ ${t.first} đến ${t.last}.` : "Chưa thấy chương nào.");
+    const stats = h("ul", { class: "small", style: "margin:.4rem 0" }, t.stats.map((s) => h("li", null,
+      h("strong", null, s.source), `: ${s.count} chương${s.count ? ` (${s.first}–${s.last})` : ""}`,
+      s.missing.length ? h("span", { style: "color:#b33" }, `, thiếu ${s.missing.join(", ")}`) : null)));
+    const errs = res.members.filter((m) => m.error).map((m) => h("div", { class: "notice" }, `${m.key}: ${m.error}`));
+    const onlyGaps = h("input", { type: "checkbox", onchange: draw });
+    const wrap = h("div", { class: "multi-table" });
+    const links = res.members.filter((m) => !m.error).map((m) => h("a", { class: "btn small", href: "#/series?" + new URLSearchParams({ source: m.source, id: m.id, lang: lang.value }) }, `Tải từ ${m.key}`));
+    function draw() {
+      const body = h("tbody");
+      let prev = null;
+      const gapRow = (n) => h("tr", { class: "gap" }, h("td", null, String(n)), h("td", { colspan: String(keys.length) }, "Thiếu — không nguồn nào có"));
+      for (const row of t.rows) {
+        if (Number.isInteger(row.value)) {
+          // The whole numbers nobody has, in their place.
+          for (let n = prev === null ? (row.value >= 1 ? 1 : 0) : Math.floor(prev) + 1; n < row.value; n++) if (gaps.has(n)) body.append(gapRow(n));
+          prev = row.value;
+        } else if (prev === null) prev = Math.floor(row.value);
+        const present = new Set(row.sources.map((e) => e.source));
+        const missingSomewhere = keys.some((k) => !present.has(k));
+        if (onlyGaps.checked && !missingSomewhere) continue;
+        body.append(h("tr", null, h("td", null, row.number), keys.map((k) => {
+          const e = row.sources.find((x) => x.source === k);
+          return h("td", { class: e ? "yes" : "no", title: e ? [e.title, (e.groups || []).join(", ")].filter(Boolean).join(" · ") : "" }, e ? "✓" : "–");
+        })));
+      }
+      wrap.replaceChildren(h("table", null,
+        h("thead", null, h("tr", null, h("th", null, "Chương"), keys.map((k) => h("th", null, k)))), body));
+    }
+    draw();
+    return h("div", { class: "panel" }, h("h2", { style: "margin-top:0" }, "Chương của các nguồn đã chọn"), warn, stats, ...errs,
+      h("div", { class: "row", style: "align-items:center" }, h("label", { class: "check" }, onlyGaps, "Chỉ hiện chương mà có nguồn thiếu"), ...links),
+      wrap,
+      t.others.length ? h("details", null, h("summary", null, `${t.others.length} chương không đánh số (đặc biệt, ngoại truyện…)`),
+        h("ul", { class: "small" }, t.others.map((o) => h("li", null, `${o.number} — ${o.sources.map((e) => e.source).join(", ")}`)))) : null,
+      h("p", { class: "muted small" }, "Tải theo từng chương từ nhiều nguồn trong một lần sẽ có ở bước sau. Hiện bạn bấm “Tải từ …” để mở trang truyện ở nguồn đó và tải."));
+  }
+  if (view.q) input.focus();
+}
 
 // ---------- library ----------
 

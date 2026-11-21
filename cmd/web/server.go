@@ -173,6 +173,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/library/convert", s.handleLibraryConvert)
 	mux.HandleFunc("POST /api/library/ads", s.handleLibraryAds)
 	mux.HandleFunc("GET /api/progress/{id}", s.handleProgress)
+	mux.HandleFunc("GET /api/multi/search", s.handleMultiSearch)
+	mux.HandleFunc("POST /api/multi/chapters", s.handleMultiChapters)
 	mux.HandleFunc("POST /api/library/mobi", s.handleLibraryMOBI)
 	mux.HandleFunc("POST /api/library/delete", s.handleLibraryDelete)
 	mux.HandleFunc("POST /api/library/backup", s.handleLibraryBackup)

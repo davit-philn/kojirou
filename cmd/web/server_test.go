@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/leotaku/kojirou/cmd/multi"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -1958,4 +1959,90 @@ func TestLibraryRemembersWhereASeriesCameFrom(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("the library did not learn where the series came from")
+}
+
+// multiSite is a small website with a search and one series page whose
+// chapters are the given numbers.
+func multiSite(t *testing.T, title string, chapters ...string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/list" || r.URL.Path == "/search":
+			_, _ = fmt.Fprintf(w, `<div class="card"><a href="/s/1">%s</a></div><div class="card"><a href="/s/2">Unrelated</a></div>`, title)
+		case r.URL.Path == "/s/1":
+			for _, n := range chapters {
+				_, _ = fmt.Fprintf(w, `<div class="c"><a href="/c/%s">Chapter %s</a></div>`, n, n)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv
+}
+
+func TestSearchSeveralSourcesAtOnceAndMergeTheirChapters(t *testing.T) {
+	e := newEnv(t, nil)
+	sites := map[string]*httptest.Server{
+		"alpha": multiSite(t, "Blue Lock", "5", "3", "2", "1"),
+		"beta":  multiSite(t, "BLUE LOCK (Tiếng Việt)", "6", "5", "4"),
+		"gamma": multiSite(t, "Something Else", "1"),
+	}
+	for name, site := range sites {
+		cfg, _ := json.Marshal(map[string]any{
+			"base_url": site.URL, "chapter_list_selector": ".c a", "image_list_selector": "img",
+			"list_url": "/list", "series_selector": ".card a", "search_url": "/search?q={q}",
+		})
+		if rec := e.do("POST", "/api/sources", map[string]any{"name": name, "config": json.RawMessage(cfg)}); rec.Code != 200 {
+			t.Fatalf("save %s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	e.saveSource("plain") // has no search
+
+	res := decode[multiSearchResult](t, e.do("GET", "/api/multi/search?q=blue+lock", nil))
+	status := map[string]string{}
+	for _, s := range res.Sources {
+		status[s.Source] = s.Status
+	}
+	if status["alpha"] != "ok" || status["beta"] != "ok" || status["plain"] != "skipped" {
+		t.Errorf("statuses = %v", status)
+	}
+	if len(res.Groups) == 0 || res.Groups[0].Sources != 2 {
+		t.Fatalf("groups = %+v, want the first to be found by alpha and beta", res.Groups)
+	}
+	var members []map[string]string
+	for _, m := range res.Groups[0].Members {
+		members = append(members, map[string]string{"source": m.Source, "id": m.ID, "title": m.Title})
+	}
+	if rec := e.do("GET", "/api/multi/search?q=", nil); rec.Code != 400 {
+		t.Errorf("empty query: %d", rec.Code)
+	}
+
+	out := decode[multiChaptersResult](t, e.do("POST", "/api/multi/chapters", map[string]any{"members": members, "lang": "en"}))
+	if out.Table.First != "1" || out.Table.Last != "6" {
+		t.Fatalf("table = %+v", out.Table)
+	}
+	if want := []string{"4"}; len(out.Table.Gaps) != 0 {
+		t.Errorf("gaps = %v: beta has 4, so only %v could be missing", out.Table.Gaps, want)
+	}
+	stats := map[string]multi.SourceStat{}
+	for _, s := range out.Table.Stats {
+		stats[s.Source] = s
+	}
+	if len(stats["alpha"].Missing) != 1 || stats["alpha"].Missing[0] != "4" || len(stats["beta"].Missing) != 1 || stats["beta"].Missing[0] != "1-3" {
+		t.Errorf("stats = %+v", stats)
+	}
+	// A source that cannot be reached is reported but does not break the rest.
+	members = append(members, map[string]string{"source": "alpha", "id": "http://127.0.0.1:1/x", "title": "x"})
+	bad := decode[multiChaptersResult](t, e.do("POST", "/api/multi/chapters", map[string]any{"members": members, "lang": "en"}))
+	errs := 0
+	for _, m := range bad.Members {
+		if m.Error != "" {
+			errs++
+		}
+	}
+	if errs != 1 || len(bad.Table.Rows) != 6 {
+		t.Errorf("errors = %d, rows = %d", errs, len(bad.Table.Rows))
+	}
 }

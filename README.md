@@ -374,3 +374,7 @@ The **Thư viện** page lists every series with its files and offers:
 ## Starting with automatic updates (Windows)
 
 `contrib/chay-kojirou.bat` (copy it into the library folder, next to the series folders) starts Kojirou and, before that, looks on GitHub for a newer version of the branch. If there is one it downloads it, builds it with Go and replaces `kojirou.exe`; with no network or no Go it just starts the version it has. `chay-kojirou.bat --no-update` skips the check. The installed version is kept in `kojirou.version` next to `kojirou.exe`.
+
+## Searching every source at once
+
+**Tìm nhiều nguồn** searches MangaDex and all saved sources that have a search address at the same time (a few requests in parallel, one slow or broken source never stops the others), groups the results that are the same series (titles are compared without case, accents, punctuation and bracketed notes) and, for the series you pick, lists the chapters of every chosen source in one table: which source has which chapter, the whole chapter numbers that **no** source has (warned in red), and what each source lacks between chapter 1 and its last one. Untick a source that found a different series. Downloading chapter by chapter from several sources in one go is the next step; for now each source has a "Tải từ …" button that opens its series page.

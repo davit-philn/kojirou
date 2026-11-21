@@ -213,3 +213,12 @@ pre.result { background: var(--surface-2); padding: .75rem; border-radius: 8px; 
 .page-cell.picked { border-color: #d33; }
 .page-cell.picked img { opacity: .45; }
 .variant { margin-top: .5rem; }
+
+.multi-table { max-height: 60vh; overflow: auto; margin: .5rem 0; border: 1px solid var(--border); border-radius: 8px; }
+.multi-table table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+.multi-table th, .multi-table td { padding: .3rem .6rem; text-align: center; border-bottom: 1px solid var(--border); }
+.multi-table th { position: sticky; top: 0; background: var(--surface-2); }
+.multi-table td:first-child, .multi-table th:first-child { text-align: left; font-variant-numeric: tabular-nums; }
+.multi-table td.yes { color: var(--ok); font-weight: 600; }
+.multi-table td.no { color: var(--muted); }
+.multi-table tr.gap td { background: rgba(204, 51, 51, .15); color: #b33; text-align: left; }
