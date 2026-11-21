@@ -138,6 +138,9 @@ func (s *Server) rememberOrigin(info JobInfo, opts job.Options) {
 	name := strings.Split(filepath.ToSlash(rel), "/")[0]
 	meta, _ := s.meta.Get(name)
 	meta.Source, meta.SourceID = info.Source, opts.Identifier
+	if opts.Multi != nil {
+		meta.SourceID = opts.Multi.Title
+	}
 	_ = s.meta.Save(name, meta)
 }
 
@@ -604,7 +607,22 @@ type fillRequest struct {
 	URL    string `json:"url"`
 }
 
+// multiDownload asks for a series to be read from several sources at once.
+type multiDownload struct {
+	Title string `json:"title"`
+	// Members are the sources in order of preference.
+	Members []multiMember `json:"members"`
+	// Choice names, per chapter number, the member (index) to use instead.
+	Choice            map[string]int `json:"choice"`
+	ChaptersPerVolume int            `json:"chaptersPerVolume"`
+}
+
+var chapterRangePattern = regexp.MustCompile(`^[0-9.,\- ]{1,200}$`)
+
 type downloadRequest struct {
+	Multi *multiDownload `json:"multi"`
+	// Chapters limits the download to these chapter numbers, e.g. "1-20,25".
+	Chapters    string       `json:"chapters"`
 	Fill        *fillRequest `json:"fill"`
 	VolumesFrom string       `json:"volumesFrom"`
 	Source      string       `json:"source"`
@@ -675,6 +693,12 @@ func (s *Server) handleStartDownload(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = mangadexSource
 	}
+	if req.Multi != nil {
+		source = multiSourceName
+		if title == "" || title == req.ID {
+			title = req.Multi.Title
+		}
+	}
 	info, err := s.jobs.Enqueue(opts, title, source)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, err)
@@ -685,20 +709,29 @@ func (s *Server) handleStartDownload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 	var zero job.Options
-	cfg, err := s.resolveSource(req.Source, req.ID)
-	if err != nil {
-		return zero, err
-	}
-	withTitle(cfg, req.Title)
+	var cfg *selector.SourceConfig
 	var fill *job.FillSource
-	if req.Fill != nil {
-		if fill, err = s.resolveFill(cfg, req.Fill.Source, req.Fill.URL); err != nil {
+	var multiCfg *job.MultiSource
+	var volumesFrom string
+	var err error
+	if req.Multi != nil {
+		if multiCfg, volumesFrom, err = s.resolveMulti(req); err != nil {
 			return zero, err
 		}
-	}
-	volumesFrom, err := s.resolveVolumesFrom(cfg, fill, req.VolumesFrom)
-	if err != nil {
-		return zero, err
+		req.ID = multiCfg.Members[0].ID
+	} else {
+		if cfg, err = s.resolveSource(req.Source, req.ID); err != nil {
+			return zero, err
+		}
+		withTitle(cfg, req.Title)
+		if req.Fill != nil {
+			if fill, err = s.resolveFill(cfg, req.Fill.Source, req.Fill.URL); err != nil {
+				return zero, err
+			}
+		}
+		if volumesFrom, err = s.resolveVolumesFrom(cfg, fill, req.VolumesFrom); err != nil {
+			return zero, err
+		}
 	}
 	lang := req.Lang
 	if lang == "" {
@@ -707,8 +740,11 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 	if !languagePattern.MatchString(lang) {
 		return zero, errors.New("invalid language")
 	}
-	if len(req.ChapterIDs) == 0 {
+	if len(req.ChapterIDs) == 0 && req.Multi == nil {
 		return zero, errors.New("select at least one chapter")
+	}
+	if req.Chapters != "" && !chapterRangePattern.MatchString(req.Chapters) {
+		return zero, errors.New("chapters: use numbers and ranges such as 1-20,25")
 	}
 	if len(req.ChapterIDs) > maxChapterIDs {
 		return zero, fmt.Errorf("too many chapters (max %d)", maxChapterIDs)
@@ -764,6 +800,8 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		Identifier:      req.ID,
 		Source:          cfg,
 		Fill:            fill,
+		Multi:           multiCfg,
+		Chapters:        strings.ReplaceAll(strings.ReplaceAll(req.Chapters, " ", ""), "-", ".."),
 		VolumesFrom:     volumesFrom,
 		Wikipedia:       s.cfg.Wikipedia,
 		Language:        lang,
@@ -785,8 +823,11 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		Lossless:        req.Lossless,
 		LibraryDir:      s.cfg.LibraryDir,
 	}
-	if req.StripAds && cfg != nil {
+	if req.StripAds && (cfg != nil || multiCfg != nil) {
 		key := "source:" + req.Source
+		if multiCfg != nil {
+			key = "multi:" + multiCfg.Title
+		}
 		opts.StripAds = true
 		opts.AdStrips = s.ads.Get(key)
 		opts.OnAdStrips = func(found []adstrip.Strip) { _ = s.ads.Add(key, found) }

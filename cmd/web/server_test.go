@@ -2046,3 +2046,101 @@ func TestSearchSeveralSourcesAtOnceAndMergeTheirChapters(t *testing.T) {
 		t.Errorf("errors = %d, rows = %d", errs, len(bad.Table.Rows))
 	}
 }
+
+// pageSite is a website whose series page lists the given chapters, each with
+// one picture of its own colour (so that the page comes from this site).
+func pageSite(t *testing.T, shade uint8, chapters ...string) *httptest.Server {
+	t.Helper()
+	img := image.NewGray(image.Rect(0, 0, 40, 60))
+	for i := range img.Pix {
+		img.Pix[i] = shade
+	}
+	buf := new(bytes.Buffer)
+	if err := png.Encode(buf, img); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/series":
+			for _, n := range chapters {
+				_, _ = fmt.Fprintf(w, `<div class="c"><a href="/c/%s">Chapter %s</a></div>`, n, n)
+			}
+		case strings.HasPrefix(r.URL.Path, "/c/"):
+			_, _ = w.Write([]byte(`<div id="r"><img src="/i/a.png"></div>`))
+		case strings.HasPrefix(r.URL.Path, "/i/"):
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(buf.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv
+}
+
+func TestDownloadASeriesFromSeveralSourcesAtOnce(t *testing.T) {
+	e := newEnv(t, nil)
+	a := pageSite(t, 50, "1", "2", "4")
+	b := pageSite(t, 200, "2", "3", "4", "5")
+	for name, site := range map[string]*httptest.Server{"one": a, "two": b} {
+		cfg, _ := json.Marshal(map[string]any{"base_url": site.URL, "chapter_list_selector": ".c a", "image_list_selector": "#r img"})
+		if rec := e.do("POST", "/api/sources", map[string]any{"name": name, "config": json.RawMessage(cfg)}); rec.Code != 200 {
+			t.Fatalf("save %s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	body := map[string]any{
+		"lang": "en", "format": "cbz",
+		"multi": map[string]any{
+			"title": "Joined", "chaptersPerVolume": 2,
+			"members": []map[string]string{{"source": "one", "id": a.URL + "/series"}, {"source": "two", "id": b.URL + "/series"}},
+			"choice":  map[string]int{"4": 1},
+		},
+		"chapters": "1-4",
+	}
+	rec := e.do("POST", "/api/downloads", body)
+	if rec.Code != 202 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	done := waitFor(t, e, decode[JobInfo](t, rec).ID, "done", "failed")
+	if done.State != "done" || done.Source != "multi" || done.Title != "Joined" {
+		t.Fatalf("job = %+v", done)
+	}
+	lib := decode[[]LibrarySeries](t, e.do("GET", "/api/library", nil))
+	if len(lib) != 1 || lib[0].Name != "Joined" || len(lib[0].Files) != 2 {
+		t.Fatalf("library = %+v, want chapters 1-4 in two volumes of two chapters", lib)
+	}
+	if lib[0].Source != "multi" || lib[0].SourceID != "Joined" {
+		t.Errorf("origin = %q %q", lib[0].Source, lib[0].SourceID)
+	}
+	// Chapter 4 was chosen from "two" (light), chapter 1 only exists on "one" (dark).
+	shade := func(file string, page int) uint8 {
+		img, err := readPage(filepath.Join(e.library, "Joined", file), page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, _, _, _ := img.At(5, 5).RGBA()
+		return uint8(g >> 8)
+	}
+	var first, second string
+	for _, f := range lib[0].Files {
+		if first == "" {
+			first = f.Name
+		} else {
+			second = f.Name
+		}
+	}
+	if shade(first, 0) > 100 || shade(second, 1) < 150 {
+		t.Errorf("pages come from the wrong sources: %d %d", shade(first, 0), shade(second, 1))
+	}
+
+	for name, bad := range map[string]map[string]any{
+		"unknown source": {"multi": map[string]any{"title": "x", "members": []map[string]string{{"source": "nope", "id": "http://x/y"}}}},
+		"bad choice":     {"multi": map[string]any{"title": "x", "members": []map[string]string{{"source": "one", "id": a.URL + "/series"}}, "choice": map[string]int{"1": 5}}},
+		"bad range":      {"multi": map[string]any{"title": "x", "members": []map[string]string{{"source": "one", "id": a.URL + "/series"}}}, "chapters": "1;drop"},
+	} {
+		if rec := e.do("POST", "/api/downloads", bad); rec.Code != 400 {
+			t.Errorf("%s: status %d, want 400 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+}

@@ -222,3 +222,5 @@ pre.result { background: var(--surface-2); padding: .75rem; border-radius: 8px; 
 .multi-table td.yes { color: var(--ok); font-weight: 600; }
 .multi-table td.no { color: var(--muted); }
 .multi-table tr.gap td { background: rgba(204, 51, 51, .15); color: #b33; text-align: left; }
+.multi-table td.yes { cursor: pointer; }
+.multi-table td.chosen { background: rgba(42, 138, 74, .22); }

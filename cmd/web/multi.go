@@ -11,10 +11,14 @@ import (
 	"time"
 
 	"github.com/leotaku/kojirou/cmd/formats/selector"
+	"github.com/leotaku/kojirou/cmd/job"
 	"github.com/leotaku/kojirou/cmd/multi"
 	md "github.com/leotaku/kojirou/mangadex"
 	"golang.org/x/text/language"
 )
+
+// multiSourceName is the source name of downloads that read several sources.
+const multiSourceName = "multi"
 
 const (
 	multiParallel    = 4
@@ -265,4 +269,65 @@ func (s *Server) memberChapters(ctx context.Context, m multiMemberOut, tag langu
 	}
 
 	return out, nil
+}
+
+// resolveMulti checks a request for a download from several sources and turns
+// it into the job's settings. The volumes come from the MangaDex member when
+// there is one.
+func (s *Server) resolveMulti(req downloadRequest) (*job.MultiSource, string, error) {
+	m := req.Multi
+	if len(m.Members) == 0 || len(m.Members) > maxMultiMembers {
+		return nil, "", errors.New("choose between 1 and 30 sources")
+	}
+	title := strings.TrimSpace(m.Title)
+	if title == "" {
+		title = m.Members[0].Title
+	}
+	if title == "" || len(title) > 200 {
+		return nil, "", errors.New("the series needs a title of up to 200 characters")
+	}
+	if m.ChaptersPerVolume < 0 || m.ChaptersPerVolume > 1000 {
+		return nil, "", errors.New("chapters per volume must be between 0 and 1000")
+	}
+	out := &job.MultiSource{Title: title, Choice: map[string]int{}, ChaptersPerVolume: m.ChaptersPerVolume}
+	volumesFrom := ""
+	for _, mem := range m.Members {
+		member := job.MultiMember{Name: mem.Source, ID: mem.ID}
+		if mem.Source == mangadexSource {
+			if !uuidPattern.MatchString(mem.ID) {
+				return nil, "", errors.New("invalid MangaDex series id")
+			}
+			if volumesFrom == "" {
+				volumesFrom = mem.ID
+			}
+		} else {
+			cfg, ok, err := s.sources.Get(mem.Source)
+			if err != nil {
+				return nil, "", err
+			}
+			if !ok {
+				return nil, "", fmt.Errorf("unknown source %q", mem.Source)
+			}
+			if u, err := url.Parse(mem.ID); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || !cfg.SameSite(mem.ID) {
+				return nil, "", fmt.Errorf("%s: the series address must be on the source's own website", mem.Source)
+			}
+			member.Config = &cfg
+		}
+		out.Members = append(out.Members, member)
+	}
+	for number, index := range m.Choice {
+		if index < 0 || index >= len(out.Members) || len(number) > 16 {
+			return nil, "", errors.New("a chapter is assigned to a source that is not chosen")
+		}
+		out.Choice[number] = index
+	}
+	if v := strings.TrimSpace(req.VolumesFrom); v != "" {
+		id, ok := md.ParseSeriesID(v)
+		if !ok {
+			return nil, "", errors.New("volumes from MangaDex: not a MangaDex series ID or link")
+		}
+		volumesFrom = id
+	}
+
+	return out, volumesFrom, nil
 }

@@ -36,6 +36,11 @@ type Options struct {
 	// Fill adds the chapters MangaDex lacks from a second website. MangaDex
 	// stays the main source for volumes and covers. Not combinable with Source.
 	Fill *FillSource
+	// Multi reads the series from several sources at once, taking each
+	// chapter from the best source that has it. Not combinable with Source or
+	// Fill; Identifier only has to be non-empty. VolumesFrom, if set, decides
+	// the volumes.
+	Multi *MultiSource
 
 	// CoverPage is the address of a series page that shows every volume with
 	// its cover (e.g. on BookWalker). Those covers replace the source's own
@@ -133,8 +138,21 @@ func (o Options) validate() error {
 			return fmt.Errorf("volume for chapter %q: %w", id, err)
 		}
 	}
+	if o.Multi != nil {
+		if o.Source != nil || o.Fill != nil {
+			return errors.New("several sources cannot be combined with a single source or a fill source")
+		}
+		if len(o.Multi.Members) == 0 {
+			return errors.New("several sources: no source given")
+		}
+		for _, m := range o.Multi.Members {
+			if m.ID == "" || m.Name == "" {
+				return errors.New("several sources: a source has no series")
+			}
+		}
+	}
 	if o.VolumesFrom != "" {
-		if o.Source == nil {
+		if o.Source == nil && o.Multi == nil {
 			return errors.New("taking volumes from MangaDex needs a website as the main source")
 		}
 		if o.Fill != nil {

@@ -1111,9 +1111,10 @@ const expandRanges = (ranges) => {
   return out;
 };
 
-async function multiPage() {
+async function multiPage(params) {
   const config = await api("/api/config").catch(() => ({ sources: ["mangadex"] }));
   const view = Object.assign({ q: "", lang: store.get("browse", {}).lang || "vi" }, store.get("multi", {}));
+  if (params && params.get("q")) view.q = params.get("q");
   const input = h("input", { type: "search", placeholder: "Tên truyện, ví dụ Blue Lock", value: view.q, "aria-label": "Tên truyện" });
   const lang = h("select", { "aria-label": "Ngôn ngữ chương", style: "width:auto" },
     [["vi", "Tiếng Việt"], ["en", "English"], ["ja", "日本語"]].map(([v, t]) => h("option", { value: v }, t)));
@@ -1121,6 +1122,7 @@ async function multiPage() {
   const status = h("div");
   const results = h("div");
   const detail = h("div");
+  let currentTitle = "";
   const go = h("button", { class: "btn primary", type: "submit" }, "Tìm ở tất cả nguồn");
   const form = h("form", { style: "display:flex;gap:.5rem;flex-wrap:wrap;align-items:center", onsubmit: (e) => { e.preventDefault(); search(); } },
     h("div", { style: "flex:1;min-width:14rem" }, input), lang, go);
@@ -1163,7 +1165,7 @@ async function multiPage() {
           h("strong", null, m.source), ` — ${m.title} `,
           m.source === "mangadex" ? null : h("a", { href: m.id, target: "_blank", rel: "noreferrer noopener", class: "small" }, "mở trang"))),
         h("div", { class: "row", style: "margin-top:.5rem" },
-          h("button", { class: "btn primary", onclick: (e) => chapters(g.members.filter((_, i) => picks[i]), e.target) }, "Xem chương ở các nguồn đã chọn"))));
+          h("button", { class: "btn primary", onclick: (e) => { currentTitle = g.title; chapters(g.members.filter((_, i) => picks[i]), e.target); } }, "Xem chương ở các nguồn đã chọn"))));
     return card;
   }
 
@@ -1178,14 +1180,17 @@ async function multiPage() {
       const res = await api("/api/multi/chapters", { method: "POST", timeout: 150000,
         body: { members: members.map((m) => ({ source: m.source, id: m.id, title: m.title })), lang: lang.value } });
       bar.done("Xong");
-      detail.replaceChildren(chapterTable(res));
+      detail.replaceChildren(chapterTable(res, members.length ? currentTitle : ""));
     } catch (err) { detail.replaceChildren(errorBox(err)); }
     button.disabled = false;
   }
 
-  function chapterTable(res) {
+  function chapterTable(res, title) {
     const t = res.table;
-    const keys = res.members.filter((m) => !m.error).map((m) => m.key);
+    // The sources that loaded, in order of preference: the first one that has a chapter is used for it.
+    const order = res.members.filter((m) => !m.error);
+    const choice = {}; // chapter number -> key of the source picked by hand
+    const hasDex = order.some((m) => m.source === "mangadex");
     const gaps = expandRanges(t.gaps);
     const warn = t.gaps.length
       ? h("div", { class: "notice", style: "border-color:#c33" }, h("strong", null, "Thiếu chương: "), t.gaps.join(", "), " — không nguồn nào trong số đã chọn có các chương này.")
@@ -1196,37 +1201,92 @@ async function multiPage() {
     const errs = res.members.filter((m) => m.error).map((m) => h("div", { class: "notice" }, `${m.key}: ${m.error}`));
     const onlyGaps = h("input", { type: "checkbox", onchange: draw });
     const wrap = h("div", { class: "multi-table" });
-    const links = res.members.filter((m) => !m.error).map((m) => h("a", { class: "btn small", href: "#/series?" + new URLSearchParams({ source: m.source, id: m.id, lang: lang.value }) }, `Tải từ ${m.key}`));
+    const priority = h("div");
+    const plan = h("p", { class: "small" });
+    // Which source a chapter is taken from: the one picked by hand, else the first in order that has it.
+    const chosenFor = (row) => {
+      const have = new Set(row.sources.map((e) => e.source));
+      const picked = choice[row.number];
+      if (picked && have.has(picked)) return picked;
+      const m = order.find((x) => have.has(x.key));
+      return m ? m.key : null;
+    };
+    function drawPriority() {
+      priority.replaceChildren(h("div", { class: "small muted" }, "Thứ tự ưu tiên nguồn (chương có ở nhiều nguồn sẽ lấy từ nguồn đứng trên):"),
+        ...order.map((m, i) => h("div", { class: "row", style: "align-items:center;gap:.4rem;margin:.15rem 0" },
+          h("span", null, `${i + 1}. `), h("strong", null, m.key), h("span", { class: "muted small" }, m.title),
+          h("button", { class: "btn small", disabled: i === 0, onclick: () => { [order[i - 1], order[i]] = [order[i], order[i - 1]]; refresh(); } }, "↑"),
+          h("button", { class: "btn small", disabled: i === order.length - 1, onclick: () => { [order[i + 1], order[i]] = [order[i], order[i + 1]]; refresh(); } }, "↓"))));
+    }
+    function refresh() { drawPriority(); draw(); }
     function draw() {
       const body = h("tbody");
       let prev = null;
-      const gapRow = (n) => h("tr", { class: "gap" }, h("td", null, String(n)), h("td", { colspan: String(keys.length) }, "Thiếu — không nguồn nào có"));
+      const counts = {};
+      const gapRow = (n) => h("tr", { class: "gap" }, h("td", null, String(n)), h("td", { colspan: String(order.length) }, "Thiếu — không nguồn nào có"));
       for (const row of t.rows) {
         if (Number.isInteger(row.value)) {
-          // The whole numbers nobody has, in their place.
           for (let n = prev === null ? (row.value >= 1 ? 1 : 0) : Math.floor(prev) + 1; n < row.value; n++) if (gaps.has(n)) body.append(gapRow(n));
           prev = row.value;
         } else if (prev === null) prev = Math.floor(row.value);
         const present = new Set(row.sources.map((e) => e.source));
-        const missingSomewhere = keys.some((k) => !present.has(k));
-        if (onlyGaps.checked && !missingSomewhere) continue;
-        body.append(h("tr", null, h("td", null, row.number), keys.map((k) => {
-          const e = row.sources.find((x) => x.source === k);
-          return h("td", { class: e ? "yes" : "no", title: e ? [e.title, (e.groups || []).join(", ")].filter(Boolean).join(" · ") : "" }, e ? "✓" : "–");
+        const chosen = chosenFor(row);
+        if (chosen) counts[chosen] = (counts[chosen] || 0) + 1;
+        if (onlyGaps.checked && order.every((m) => present.has(m.key))) continue;
+        body.append(h("tr", null, h("td", null, row.number), order.map((m) => {
+          const e = row.sources.find((x) => x.source === m.key);
+          if (!e) return h("td", { class: "no" }, "–");
+          const mine = chosen === m.key;
+          return h("td", { class: "yes" + (mine ? " chosen" : ""), title: [e.title, (e.groups || []).join(", "), "Bấm để lấy chương này từ nguồn này"].filter(Boolean).join(" · "),
+            onclick: () => { if (choice[row.number] === m.key) delete choice[row.number]; else choice[row.number] = m.key; draw(); } }, mine ? "●" : "✓");
         })));
       }
       wrap.replaceChildren(h("table", null,
-        h("thead", null, h("tr", null, h("th", null, "Chương"), keys.map((k) => h("th", null, k)))), body));
+        h("thead", null, h("tr", null, h("th", null, "Chương"), order.map((m) => h("th", null, m.key)))), body));
+      plan.textContent = "Sẽ tải: " + (order.map((m) => `${counts[m.key] || 0} chương từ ${m.key}`).join(", ") || "không có chương nào") + ".";
     }
-    draw();
+
+    // ----- the download itself -----
+    const opt = Object.assign({ device: "kindle-pw3", stripAds: true }, store.get("multiDownload", {}));
+    const kindle = h("input", { type: "checkbox", checked: !!opt.device, onchange: (e) => { opt.device = e.target.checked ? "kindle-pw3" : ""; store.set("multiDownload", opt); } });
+    const strip = h("input", { type: "checkbox", checked: opt.stripAds, onchange: (e) => { opt.stripAds = e.target.checked; store.set("multiDownload", opt); } });
+    const from = h("input", { type: "text", placeholder: "tất cả", style: "width:7rem", "aria-label": "Các chương cần tải" });
+    const perVol = h("input", { type: "number", min: "0", max: "1000", value: String(opt.perVolume ?? 10), style: "width:5rem", onchange: (e) => { opt.perVolume = Number(e.target.value) || 0; store.set("multiDownload", opt); } });
+    const dl = h("button", { class: "btn primary", onclick: async () => {
+      const index = Object.fromEntries(order.map((m, i) => [m.key, i]));
+      const body = {
+        lang: lang.value, format: "cbz",
+        multi: { title, members: order.map((m) => ({ source: m.source, id: m.id, title: m.title })), choice: Object.fromEntries(Object.entries(choice).map(([n, k]) => [n, index[k]])),
+          chaptersPerVolume: hasDex ? 0 : Number(perVol.value) || 0 },
+        chapters: from.value.trim() || undefined,
+        device: kindle.checked ? "kindle-pw3" : undefined, fitMode: kindle.checked ? "smart" : undefined, widepage: kindle.checked ? "split" : undefined, autocrop: kindle.checked || undefined,
+        stripAds: strip.checked,
+      };
+      dl.disabled = true;
+      try {
+        await api("/api/downloads", { method: "POST", body });
+        toast("Đã đưa vào hàng đợi tải. Xem tiến độ ở tab Đang tải.", { link: { href: "#/downloads", text: "Mở Đang tải" } });
+      } catch (err) { toast(err.message, { bad: true }); }
+      dl.disabled = false;
+    } }, "Tải truyện từ các nguồn này");
+    refresh();
     return h("div", { class: "panel" }, h("h2", { style: "margin-top:0" }, "Chương của các nguồn đã chọn"), warn, stats, ...errs,
-      h("div", { class: "row", style: "align-items:center" }, h("label", { class: "check" }, onlyGaps, "Chỉ hiện chương mà có nguồn thiếu"), ...links),
-      wrap,
-      t.others.length ? h("details", null, h("summary", null, `${t.others.length} chương không đánh số (đặc biệt, ngoại truyện…)`),
+      priority,
+      h("div", { class: "row", style: "align-items:center;margin-top:.5rem" }, h("label", { class: "check" }, onlyGaps, "Chỉ hiện chương mà có nguồn thiếu")),
+      wrap, plan,
+      t.others.length ? h("details", null, h("summary", null, `${t.others.length} chương không đánh số (đặc biệt, ngoại truyện…) — không được tải`),
         h("ul", { class: "small" }, t.others.map((o) => h("li", null, `${o.number} — ${o.sources.map((e) => e.source).join(", ")}`)))) : null,
-      h("p", { class: "muted small" }, "Tải theo từng chương từ nhiều nguồn trong một lần sẽ có ở bước sau. Hiện bạn bấm “Tải từ …” để mở trang truyện ở nguồn đó và tải."));
+      h("div", { class: "panel" },
+        h("div", { class: "options" },
+          h("label", { class: "field" }, h("span", null, "Chỉ tải các chương (vd 1-50, 55)"), from),
+          hasDex ? h("p", { class: "muted small" }, "Chia tập theo MangaDex.") : h("label", { class: "field" }, h("span", null, "Số chương mỗi tập (0 = giữ theo nguồn)"), perVol),
+          h("div", { class: "field" }, h("span", null, "Khác"),
+            h("label", { class: "check" }, kindle, "Chỉnh sẵn cho Kindle PW3 (vừa màn hình, tách trang đôi)"),
+            h("label", { class: "check" }, strip, "Tự bỏ quảng cáo ở đầu/cuối chương"))),
+        h("div", { class: "row", style: "margin-top:.5rem" }, dl)));
   }
-  if (view.q) input.focus();
+  if (params && params.get("q")) search();
+  else if (view.q) input.focus();
 }
 
 // ---------- library ----------
@@ -1626,7 +1686,7 @@ async function libraryPage() {
       hasCbz(series) ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
       hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
       hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null,
-      series.source ? h("a", { class: "btn small", title: "Mở trang truyện để xem và tải các tập mới", href: "#/series?" + new URLSearchParams({ source: series.source, id: series.sourceId, lang: store.get("browse", {}).lang || "en" }) }, "Tập mới?") : null,
+      series.source ? h("a", { class: "btn small", title: "Mở trang truyện để xem và tải các tập mới", href: series.source === "multi" ? "#/multi?" + new URLSearchParams({ q: series.sourceId }) : "#/series?" + new URLSearchParams({ source: series.source, id: series.sourceId, lang: store.get("browse", {}).lang || "en" }) }, "Tập mới?") : null,
       hasCbz(series) ? h("button", { class: "btn small", title: "Tạo file .azw3 cho Kindle không mở được CBZ", onclick: () => runMobi([series]) }, "Tạo AZW3") : null,
       backups ? h("button", { class: "btn small", title: "Trả cả truyện về như trước khi sửa", onclick: async () => {
         if (!confirm(`Khôi phục ${backups} file của “${series.name}” về bản trước khi sửa?`)) return;
