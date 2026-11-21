@@ -537,3 +537,72 @@ func TestAdvertisingStripsAreCutWhileDownloading(t *testing.T) {
 		}
 	}
 }
+
+func TestAdvertisingPagesAreDroppedWhileDownloading(t *testing.T) {
+	adWhole := func(pattern int) image.Image {
+		const w, h = 200, 240
+		g := image.NewGray(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				z := uint64(pattern)*0x9E3779B97F4A7C15 + uint64(x*16/w)*0xBF58476D1CE4E5B9 + uint64(y*16/w)*0x94D049BB133111EB
+				z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+				z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+				g.Pix[y*g.Stride+x] = uint8(30 + (z^(z>>31))%200)
+			}
+		}
+		return g
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/series":
+			_, _ = w.Write([]byte(`<div class="c"><a href="/c/3">Chapter 3</a><a href="/c/2">Chapter 2</a><a href="/c/1">Chapter 1</a></div>`))
+		case strings.HasPrefix(r.URL.Path, "/c/"):
+			c := strings.TrimPrefix(r.URL.Path, "/c/")
+			var b strings.Builder
+			b.WriteString(`<div id="r">`)
+			for i := 0; i < 5; i++ { // ad, three pages, ad
+				b.WriteString(`<img src="/p/` + c + `/` + string(rune('0'+i)) + `.png">`)
+			}
+			b.WriteString(`</div>`)
+			_, _ = w.Write([]byte(b.String()))
+		case strings.HasPrefix(r.URL.Path, "/p/"):
+			var chapter, page int
+			_, _ = fmt.Sscanf(r.URL.Path, "/p/%d/%d.png", &chapter, &page)
+			switch page {
+			case 0:
+				_ = png.Encode(w, adWhole(1))
+			case 4:
+				_ = png.Encode(w, adWhole(2))
+			default:
+				_ = png.Encode(w, adPicture(chapter*10+page, ""))
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	opts := siteOptions(srv)
+	opts.Source.ChaptersPerVolume = 0
+	opts.Out = t.TempDir()
+	opts.StripAds = true
+	if _, err := Run(context.Background(), opts, NopReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := filepath.Glob(filepath.Join(opts.Out, "*.cbz"))
+	zr, err := zip.OpenReader(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close() //nolint:errcheck
+	pictures := 0
+	for _, f := range zr.File {
+		if strings.HasSuffix(f.Name, ".jpg") {
+			pictures++
+		}
+	}
+	// 3 chapters x 5 images, of which 2 per chapter are advertisements.
+	if pictures != 9 {
+		t.Errorf("%d pictures written, want 9 (the six advertising pages dropped)", pictures)
+	}
+}

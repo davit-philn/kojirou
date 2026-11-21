@@ -1618,3 +1618,48 @@ func TestDownloadRequestAsksToStripAdsOnlyForCustomSources(t *testing.T) {
 		t.Error("MangaDex pages carry no ads of a website, so nothing is cut")
 	}
 }
+
+func TestWholeAdvertisingPagesAreRemovedFromALibrarySeries(t *testing.T) {
+	e := newEnv(t, nil)
+	if err := os.MkdirAll(filepath.Join(e.library, "Ads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Three chapters' worth of story pages, each ending with the same advert.
+	names := []string{}
+	for c := 0; c < 3; c++ {
+		path := filepath.Join(e.library, "Ads", fmt.Sprintf("%04d.cbz", c+1))
+		f, _ := os.Create(path)
+		zw := zip.NewWriter(f)
+		for i := 0; i < 4; i++ {
+			seed := c*10 + i + 1
+			if i == 3 {
+				seed = 777 // the advertising page, identical in every file
+			}
+			w, _ := zw.Create(fmt.Sprintf("%05d.png", i))
+			if err := png.Encode(w, bannerPage(seed, "")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		f.Close() //nolint:errcheck
+		old := time.Now().Add(-time.Hour)
+		_ = os.Chtimes(path, old, old)
+		names = append(names, path)
+	}
+	done := decode[adsResult](t, e.do("POST", "/api/library/ads", map[string]any{"series": "Ads", "apply": true}))
+	if done.Dropped != 3 {
+		t.Fatalf("apply = %+v, want 3 advertising pages dropped", done)
+	}
+	for _, path := range names {
+		zr, err := zip.OpenReader(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(zr.File) != 3 {
+			t.Errorf("%s has %d entries, want 3", filepath.Base(path), len(zr.File))
+		}
+		zr.Close() //nolint:errcheck
+	}
+}

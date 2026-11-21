@@ -186,3 +186,66 @@ func abs(v int) int {
 
 	return v
 }
+
+// adPage is a whole picture (1.2 times as high as wide) of the given pattern.
+func adPage(w int, pattern int64) *image.Gray {
+	h := w * 6 / 5
+	g := image.NewGray(image.Rect(0, 0, w, h))
+	noise := rand.New(rand.NewSource(int64(w) + pattern))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			v := int(blockAt(pattern, x*16/w, y*16/w)) + noise.Intn(7) - 3
+			if v < 0 {
+				v = 0
+			} else if v > 255 {
+				v = 255
+			}
+			g.SetGray(x, y, color.Gray{uint8(v)})
+		}
+	}
+
+	return g
+}
+
+func TestWholeAdvertisingPagesAreFoundAndDropped(t *testing.T) {
+	pages := []image.Image{
+		adPage(800, 71), page(800, 1000, 0, 0, 1), page(800, 1000, 0, 0, 2), adPage(800, 72), // chapter 1
+		adPage(700, 71), page(700, 900, 0, 0, 3), page(700, 900, 0, 0, 4), adPage(700, 72), // chapter 2
+	}
+	strips := Detect(analyze(pages...))
+	whole := 0
+	for _, s := range strips {
+		if s.Position == PageAd {
+			whole++
+		} else {
+			t.Errorf("unexpected %v strip: it is only the top or bottom of an advertising page", s.Position)
+		}
+	}
+	if whole != 2 {
+		t.Fatalf("found %d advertising pages, want 2: %+v", whole, strips)
+	}
+	for i, img := range pages {
+		cut := Find(Analyze(img), strips)
+		isAd := i%4 == 0 || i%4 == 3
+		if cut.Drop != isAd || (!isAd && !cut.Empty()) {
+			t.Errorf("page %d: %+v, want drop=%v", i, cut, isAd)
+		}
+	}
+	// An advertising page seen once before is dropped from a lone chapter too.
+	if cut := Find(Analyze(adPage(760, 71)), strips); !cut.Drop {
+		t.Errorf("the page was not recognised at another size: %+v", cut)
+	}
+}
+
+func TestPagesThatMerelyRepeatBlankPaperAreNotAdvertisements(t *testing.T) {
+	blank := func(w int) *image.Gray {
+		g := image.NewGray(image.Rect(0, 0, w, w*6/5))
+		for i := range g.Pix {
+			g.Pix[i] = 255
+		}
+		return g
+	}
+	if strips := Detect(analyze(blank(800), blank(800), blank(700))); len(strips) != 0 {
+		t.Errorf("blank pages gave %d strips", len(strips))
+	}
+}

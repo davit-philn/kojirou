@@ -38,6 +38,8 @@ type Position string
 const (
 	Top    Position = "top"
 	Bottom Position = "bottom"
+	// Page is a whole picture that is an advertisement: it is dropped.
+	PageAd Position = "page"
 )
 
 // Strip is one advertising strip: what it looks like at the comparison width.
@@ -74,7 +76,7 @@ func (s *Strip) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if plain.Rows <= 0 || len(sig) != plain.Rows*Width || (plain.Position != Top && plain.Position != Bottom) {
+	if plain.Rows <= 0 || len(sig) != plain.Rows*Width || (plain.Position != Top && plain.Position != Bottom && plain.Position != PageAd) {
 		return errInvalidStrip
 	}
 	s.Position, s.Rows, s.Sig = plain.Position, plain.Rows, sig
@@ -274,8 +276,100 @@ func Detect(pages []*Page) []Strip {
 	for _, s := range detectTop(flipped) {
 		strips = append(strips, Strip{Position: Bottom, Rows: s.Rows, Sig: s.Sig})
 	}
+	// A picture that is the same on several pages is an advertisement of its
+	// own, so a strip it would give is moot; keep the whole-page ones apart.
+	whole := detectPages(pages)
+	// Two copies of an advertising page share their whole picture, which also
+	// looks like a strip at their top and bottom; those are not wanted.
+	var kept []Strip
+	for _, st := range strips {
+		if !isPartOfAPage(st, whole) {
+			kept = append(kept, st)
+		}
+	}
 
-	return Merge(nil, strips)
+	return Merge(nil, append(kept, whole...))
+}
+
+// isPartOfAPage reports whether a strip is just the top or bottom of one of the
+// advertising pages.
+func isPartOfAPage(s Strip, pages []Strip) bool {
+	for _, page := range pages {
+		if s.Rows > page.Rows {
+			continue
+		}
+		var total float64
+		for i := 0; i < s.Rows; i++ {
+			from := i
+			if s.Position == Bottom {
+				from = page.Rows - 1 - i // a bottom strip's rows start at the page's edge
+			}
+			total += rowDistance(s.Sig[i*Width:(i+1)*Width], page.Sig[from*Width:(from+1)*Width])
+		}
+		if total/float64(s.Rows) <= stripTolerance {
+			return true
+		}
+	}
+
+	return false
+}
+
+// detectPages finds whole pictures that occur on at least two of the pages.
+func detectPages(pages []*Page) []Strip {
+	type group struct {
+		ref     *Page
+		members int
+	}
+	var groups []*group
+	for _, p := range pages {
+		if p.Rows < minRows {
+			continue
+		}
+		placed := false
+		for _, g := range groups {
+			if wholeMatch(g.ref, p) {
+				g.members++
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			groups = append(groups, &group{ref: p, members: 1})
+		}
+	}
+	var out []Strip
+	for _, g := range groups {
+		if g.members >= 2 && hasContent(g.ref.Pix, g.ref.Rows) {
+			out = append(out, Strip{Position: PageAd, Rows: g.ref.Rows, Sig: append([]byte(nil), g.ref.Pix...)})
+		}
+	}
+
+	return out
+}
+
+// wholeMatch reports whether two pages are the same picture (at any size
+// that has the same shape).
+func wholeMatch(a, b *Page) bool {
+	if absInt(a.Rows-b.Rows) > 2 {
+		return false
+	}
+	n := a.Rows
+	if b.Rows < n {
+		n = b.Rows
+	}
+	var total float64
+	for i := 0; i < n; i++ {
+		d := rowDistance(a.row(i), b.row(i))
+		if d > 3*rowTolerance {
+			return false
+		}
+		total += d
+		if i >= 8 && total/float64(i+1) > stripTolerance*1.5 {
+			return false
+		}
+	}
+
+	return total/float64(n) <= stripTolerance
 }
 
 // Merge adds strips to a list, leaving out those that look like one already
@@ -324,6 +418,9 @@ func absInt(v int) int {
 
 // matches reports whether the top (or bottom) rows of a page are the strip.
 func (s Strip) matches(p *Page) bool {
+	if s.Position == PageAd {
+		return wholeMatch(&Page{Rows: s.Rows, Pix: s.Sig}, p)
+	}
 	if p.Rows <= s.Rows+2 {
 		return false
 	}
@@ -346,16 +443,25 @@ func (s Strip) matches(p *Page) bool {
 }
 
 // Cut says how many pixels to remove from the top and the bottom of a picture.
-type Cut struct{ Top, Bottom int }
+type Cut struct {
+	Top, Bottom int
+	// Drop means the whole picture is an advertisement.
+	Drop bool
+}
 
 // Empty reports whether nothing is cut.
-func (c Cut) Empty() bool { return c.Top == 0 && c.Bottom == 0 }
+func (c Cut) Empty() bool { return c.Top == 0 && c.Bottom == 0 && !c.Drop }
 
 // Find reports what the strips cut off a page, in the page's own pixels.
 func Find(p *Page, strips []Strip) Cut {
 	var cut Cut
 	for _, s := range strips {
-		if !s.matches(p) {
+		if s.Position == PageAd && s.matches(p) {
+			return Cut{Drop: true}
+		}
+	}
+	for _, s := range strips {
+		if s.Position == PageAd || !s.matches(p) {
 			continue
 		}
 		// The row where the strip ends is part picture, part strip, so it did
@@ -378,7 +484,7 @@ func Find(p *Page, strips []Strip) Cut {
 
 // Crop removes the cut from a picture.
 func Crop(img image.Image, cut Cut) image.Image {
-	if cut.Empty() {
+	if cut.Empty() || cut.Drop {
 		return img
 	}
 	b := img.Bounds()

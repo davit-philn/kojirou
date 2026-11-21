@@ -14,6 +14,16 @@ import (
 // the ones already known for the source. It returns the pages and how many
 // were cut.
 func removeAds(images md.ImageList, known []adstrip.Strip, learned func([]adstrip.Strip)) (md.ImageList, int) {
+	out, cropped, dropped := removeAdsCounted(images, known, learned)
+
+	return out, cropped + dropped
+}
+
+// adWindow is how many pages at the start and at the end of a chapter are
+// searched: websites put their advertising pages there.
+const adWindow = 6
+
+func removeAdsCounted(images md.ImageList, known []adstrip.Strip, learned func([]adstrip.Strip)) (md.ImageList, int, int) {
 	// The first and last page of every chapter are the only ones that carry ads.
 	byChapter := map[md.Identifier][]int{}
 	var order []md.Identifier
@@ -27,9 +37,10 @@ func removeAds(images md.ImageList, known []adstrip.Strip, learned func([]adstri
 	for _, chapter := range order {
 		idx := byChapter[chapter]
 		sort.Slice(idx, func(a, b int) bool { return images[idx[a]].ImageIdentifier < images[idx[b]].ImageIdentifier })
-		edge = append(edge, idx[0])
-		if len(idx) > 1 {
-			edge = append(edge, idx[len(idx)-1])
+		for i, at := range idx {
+			if i < adWindow || i >= len(idx)-adWindow {
+				edge = append(edge, at)
+			}
 		}
 	}
 
@@ -46,23 +57,36 @@ func removeAds(images md.ImageList, known []adstrip.Strip, learned func([]adstri
 		strips = merged
 	}
 	if len(strips) == 0 {
-		return images, 0
+		return images, 0, 0
 	}
 
 	out := append(md.ImageList(nil), images...)
+	drop := map[int]bool{}
 	cropped := 0
 	for i, at := range edge {
 		cut := adstrip.Find(pages[i], strips)
-		if cut.Empty() {
-			continue
+		switch {
+		case cut.Empty():
+		case cut.Drop:
+			drop[at] = true
+		default:
+			out[at].Image = adstrip.Crop(images[at].Image, cut)
+			cropped++
 		}
-		out[at].Image = adstrip.Crop(images[at].Image, cut)
-		cropped++
+	}
+	if len(drop) == 0 {
+		return out, cropped, 0
+	}
+	kept := make(md.ImageList, 0, len(out)-len(drop))
+	for i, img := range out {
+		if !drop[i] {
+			kept = append(kept, img)
+		}
 	}
 
-	return out, cropped
+	return kept, cropped, len(drop)
 }
 
 func adsStepTitle(n int) string {
-	return fmt.Sprintf("Advertising strips cut from %d pages", n)
+	return fmt.Sprintf("Advertisements removed from %d pages", n)
 }

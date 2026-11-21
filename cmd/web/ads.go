@@ -99,6 +99,9 @@ type adsResult struct {
 	Apply  bool      `json:"apply"`
 	Files  []adsFile `json:"files"`
 	Pages  int       `json:"pages"`
+	// Dropped is how many of those pages are advertisements as a whole and are
+	// removed rather than cropped.
+	Dropped int `json:"dropped"`
 	// Strips is how many kinds of strip were found.
 	Strips int `json:"strips"`
 	// Before and After show the first page with a strip, before and after cutting.
@@ -194,6 +197,9 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 			}
 			hits[ref.file][ref.page] = cut
 			res.Pages++
+			if cut.Drop {
+				res.Dropped++
+			}
 		}
 	}
 	var fileIndexes []int
@@ -216,7 +222,9 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 		path := filepath.Join(s.cfg.LibraryDir, req.Series, files[fi].Name)
 		if img, err := readPage(path, pages[0]); err == nil {
 			res.Before, _ = dataURL(scaleToWidth(img, previewBeforeW))
-			res.After, _ = dataURL(scaleToWidth(adstrip.Crop(img, hits[fi][pages[0]]), previewBeforeW))
+			if !hits[fi][pages[0]].Drop {
+				res.After, _ = dataURL(scaleToWidth(adstrip.Crop(img, hits[fi][pages[0]]), previewBeforeW))
+			}
 		}
 	}
 
@@ -233,8 +241,9 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 			continue
 		}
 		cuts := hits[fi]
-		_, err := cbz.EditPages(path,
-			func(i int) bool { _, ok := cuts[i]; return ok },
+		_, err := cbz.Rewrite(path,
+			func(i int) bool { return cuts[i].Drop },
+			func(i int) bool { c, ok := cuts[i]; return ok && !c.Drop },
 			func(i int, img image.Image) image.Image { return adstrip.Crop(img, cuts[i]) })
 		if err != nil {
 			res.Notes = append(res.Notes, name+": "+err.Error())

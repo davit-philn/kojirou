@@ -232,11 +232,11 @@ Wide pages can be split, kept, or turned a quarter turn (`--widepage rotate`).
 
 In **Thư viện**, **Chuyển truyện cho máy đọc** does the same for files already downloaded: it previews pages of a series and writes a converted copy of every CBZ into a new series folder named `<series> [<device>]`; the originals are not touched.
 
-## Cutting advertising strips
+## Cutting advertising strips and removing advertising pages
 
 Scanlation websites often add a banner to the top of a chapter's first page and another to the bottom of its last page (the same picture every time).
-For custom sources the download option **Tự cắt dải quảng cáo ở đầu/cuối chương** finds them by comparing the first and last pages of the chapters being downloaded: rows that look alike on several pages (compared at one width, so differently scaled copies still match) are a strip, and are cut off. Blank paper is never taken for a strip. The strips found are remembered per source in `ads.json` next to `sources.json`, so a later download of a single chapter is cleaned too.
-In **Thư viện**, **Dọn quảng cáo** (per series, or for all) scans every page of the downloaded files, shows the first page with a strip before and after cutting, and cuts them when you press **Cắt quảng cáo**; only the pages with a strip are rewritten.
+For custom sources the download option **Tự cắt dải quảng cáo ở đầu/cuối chương** finds them by comparing the first and last pages of the chapters being downloaded: rows that look alike on several pages (compared at one width, so differently scaled copies still match) are a strip, and are cut off. Blank paper is never taken for a strip. The strips found are remembered per source in `ads.json` next to `sources.json`, so a later download of a single chapter is cleaned too. Sites also slip in whole advertising pages (a separate image, often of a different width, e.g. a banner of another site or a "visit our site" page): a page that looks like the same picture in several chapters, within the first or last 6 pages of a chapter, is dropped entirely. No OCR is used; pages are compared as pictures.
+In **Thư viện**, **Dọn quảng cáo** (per series, or for all) scans every page of the downloaded files, shows the first page with a strip before and after cutting, and cuts them when you press **Cắt quảng cáo**; only the pages with an advert are rewritten, and whole advertising pages are removed (the following pages are renumbered and ComicInfo.xml is updated).
 No text recognition (OCR) is used: it would need an extra program installed and is less reliable on banners printed over pictures than comparing the pictures.
 
 ## Updating covers of the library

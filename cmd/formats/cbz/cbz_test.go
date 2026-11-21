@@ -279,3 +279,66 @@ func TestSetCoverAddsACoverToAnArchiveWithoutOneAndFillsTheMetadata(t *testing.T
 		t.Error("a missing archive must be an error")
 	}
 }
+
+func TestRewriteDropsPagesRenumbersAndEdits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "0001.cbz")
+	f, _ := os.Create(path)
+	zw := zip.NewWriter(f)
+	var pic bytes.Buffer
+	if err := png.Encode(&pic, image.NewGray(image.Rect(0, 0, 10, 40))); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		w, _ := zw.Create(fmt.Sprintf("%05d.png", i))
+		if i == 2 {
+			_, _ = w.Write(pic.Bytes()) // a real picture, to be edited
+		} else {
+			_, _ = fmt.Fprintf(w, "raw page %d", i) // not a picture: must be copied without decoding
+		}
+	}
+	w, _ := zw.Create("ComicInfo.xml")
+	_, _ = w.Write([]byte(`<ComicInfo><Series>S</Series><PageCount>5</PageCount><Pages>` +
+		`<Page Image="0" Type="FrontCover"/><Page Image="1"/><Page Image="2"/><Page Image="3"/><Page Image="4" Type="BackCover"/></Pages></ComicInfo>`))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close() //nolint:errcheck
+
+	changed, err := Rewrite(path,
+		func(i int) bool { return i == 1 || i == 3 },
+		func(i int) bool { return i == 2 },
+		func(i int, img image.Image) image.Image { return image.NewGray(image.Rect(0, 0, 10, 20)) })
+	if err != nil || changed != 3 {
+		t.Fatalf("changed %d, %v; want 3 (two dropped, one edited)", changed, err)
+	}
+
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close() //nolint:errcheck
+	contents := map[string][]byte{}
+	for _, file := range zr.File {
+		rc, _ := file.Open()
+		data, _ := io.ReadAll(rc)
+		rc.Close() //nolint:errcheck
+		contents[file.Name] = data
+	}
+	if string(contents["00000.png"]) != "raw page 0" || string(contents["00002.png"]) != "raw page 4" {
+		t.Errorf("pages not renumbered in order: %q / %q", contents["00000.png"], contents["00002.png"])
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(contents["00001.png"]))
+	if err != nil || cfg.Height != 20 {
+		t.Errorf("the edited page is %v (%v), want 20 high", cfg, err)
+	}
+	var info comicBookInfo
+	if err := xml.Unmarshal(contents["ComicInfo.xml"], &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.PageCount != 3 || len(info.Pages) != 3 || info.Pages[0].Type != "FrontCover" || info.Pages[2].Type != "BackCover" || info.Pages[2].Image != 2 {
+		t.Errorf("ComicInfo not updated: %+v", info)
+	}
+	if len(contents) != 4 {
+		t.Errorf("%d entries, want 3 pages and ComicInfo.xml", len(contents))
+	}
+}

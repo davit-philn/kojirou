@@ -1125,21 +1125,21 @@ async function libraryPage() {
   function adsRow(series, res) {
     const box = h("div", { class: "notice", style: "margin:.5rem 0" });
     if (res.pages === 0) {
-      box.append(`${series.name}: không thấy dải quảng cáo nào.`);
+      box.append(`${series.name}: không thấy quảng cáo nào.`);
       return box;
     }
     const apply = h("button", { class: "btn primary small", onclick: async () => {
       apply.disabled = true;
       try {
         const out = await api("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: series.name, apply: true } });
-        box.replaceChildren(...nodes(`${series.name}: đã cắt quảng cáo ở ${res.pages} trang (${res.files.length} tập).`,
+        box.replaceChildren(...nodes(`${series.name}: đã xử lý quảng cáo ở ${res.pages} trang (${res.files.length} tập)${res.dropped ? `, trong đó xoá ${res.dropped} trang quảng cáo nguyên trang` : ""}.`,
           (out.notes || []).length ? h("ul", { class: "small muted" }, out.notes.map((n) => h("li", null, n))) : null));
         if (typeof refreshCovers === "function") refreshCovers();
       } catch (err) { apply.disabled = false; toast(err.message, { bad: true }); }
     } }, "Cắt quảng cáo");
-    box.append(h("strong", null, series.name), ` — thấy dải quảng cáo ở ${res.pages} trang của ${res.files.length} tập (${res.strips} kiểu). Ảnh trang đầu tiên có quảng cáo, trước và sau khi cắt:`,
+    box.append(h("strong", null, series.name), ` — thấy quảng cáo ở ${res.pages} trang của ${res.files.length} tập (${res.strips} kiểu${res.dropped ? `; ${res.dropped} trang là quảng cáo nguyên trang sẽ bị xoá, còn lại bị cắt dải` : ""}). Ảnh trang đầu tiên có quảng cáo, trước và sau:`,
       res.before ? h("div", { class: "preview-row" }, h("figure", null, h("img", { src: res.before, alt: "" }), h("figcaption", null, "Trước")),
-        h("figure", null, h("img", { src: res.after, alt: "" }), h("figcaption", null, "Sau"))) : null,
+        res.after ? h("figure", null, h("img", { src: res.after, alt: "" }), h("figcaption", null, "Sau")) : h("figure", null, h("figcaption", null, "Sau: trang này bị xoá"))) : null,
       h("div", { class: "row" }, apply, h("span", { class: "muted small" }, "Chỉ các trang có quảng cáo bị làm lại; các trang khác giữ nguyên. Nên sao lưu thư viện nếu bạn lo lắng.")));
     return box;
   }
