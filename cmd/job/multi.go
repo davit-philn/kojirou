@@ -36,6 +36,9 @@ type MultiSource struct {
 	// whatever the sources say (volumes from MangaDex take precedence when
 	// Options.VolumesFrom is set).
 	ChaptersPerVolume int
+	// VolumeRanges puts chapters into volumes by hand, e.g. "1:1-8, 2:9-17,
+	// 3:18-26" (volume:first-last chapter). It wins over everything else.
+	VolumeRanges string
 }
 
 type multiSource struct {
@@ -207,4 +210,67 @@ func (s *multiSource) Pages(ctx context.Context, chapters md.ChapterList, p form
 	}
 
 	return images, nil
+}
+
+type volumeRange struct {
+	volume   md.Identifier
+	from, to float64
+}
+
+// parseVolumeRanges reads "1:1-8, 2:9-17, 3:18" (separated by commas, semicolons
+// or new lines): volume, a colon, then one chapter or first-last.
+func parseVolumeRanges(text string) ([]volumeRange, error) {
+	var out []volumeRange
+	for _, part := range strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == ';' || r == '\n' }) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		vol, chapters, ok := strings.Cut(part, ":")
+		if !ok {
+			return nil, fmt.Errorf("%q: write volume:first-last, for example 2:9-17", part)
+		}
+		volume, err := ParseVolume(strings.TrimSpace(vol))
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", part, err)
+		}
+		first, last, _ := strings.Cut(strings.TrimSpace(chapters), "-")
+		from, err1 := strconv.ParseFloat(strings.TrimSpace(first), 64)
+		to := from
+		var err2 error
+		if last != "" {
+			to, err2 = strconv.ParseFloat(strings.TrimSpace(last), 64)
+		}
+		if err1 != nil || err2 != nil || to < from {
+			return nil, fmt.Errorf("%q: the chapters must be a number or first-last", part)
+		}
+		out = append(out, volumeRange{volume: volume, from: from, to: to})
+	}
+
+	return out, nil
+}
+
+// applyVolumeRanges moves the chapters into the volumes the ranges name. The
+// list is changed in place.
+func applyVolumeRanges(chapters md.ChapterList, text string) {
+	ranges, err := parseVolumeRanges(text)
+	if err != nil || len(ranges) == 0 {
+		return
+	}
+	for i := range chapters {
+		id := chapters[i].Info.Identifier
+		if id.IsSpecial() {
+			continue
+		}
+		n, err := strconv.ParseFloat(id.String(), 64)
+		if err != nil {
+			continue
+		}
+		for _, r := range ranges {
+			if n >= r.from && n <= r.to {
+				chapters[i].Info.VolumeIdentifier = r.volume
+				break
+			}
+		}
+	}
 }

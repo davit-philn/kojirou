@@ -370,6 +370,14 @@ function previewRows(pages) {
 
 // ---------- series ----------
 
+// The reader profile is one setting shared by downloads (one source or several)
+// and by the library's conversion, so a series ends up the same either way:
+// ready-made when downloaded, or made ready afterwards from the library.
+const READER_KEYS = ["device", "fitMode", "widepage", "autocrop", "enhance", "stripAds", "ltr"];
+const reader = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", autocrop: true, enhance: false, stripAds: true, ltr: false }, store.get("reader", {}));
+const saveReader = () => store.set("reader", reader);
+const SHARED_NOTE = "Cài đặt này dùng chung cho tải về và Thư viện: tải về sẽ chỉnh sẵn ảnh ngay lúc tải; truyện đã có trong thư viện thì dùng Chuyển cho Kindle với đúng các cài đặt này.";
+
 const defaultOptions = {
   format: "cbz", rightToLeft: true, autocrop: false, widepage: "preserve",
   dataSaver: "no", jpegQuality: 90, lossless: false, force: false,
@@ -381,6 +389,7 @@ async function seriesPage(params) {
   const id = params.get("id") || "";
   let lang = params.get("lang") || store.get("browse", {}).lang || "en";
   const options = Object.assign({}, defaultOptions, store.get("options", {}));
+  for (const key of READER_KEYS) options[key] = reader[key];
   let devices = [];
   const selected = new Set();
   let series = null;
@@ -655,7 +664,11 @@ async function seriesPage(params) {
   }
 
   function optionsPanel() {
-    const save = () => store.set("options", options);
+    const save = () => {
+      store.set("options", options);
+      for (const key of READER_KEYS) if (key in options) reader[key] = options[key];
+      saveReader();
+    };
     const sel = (key, items, label, hidden) => h("label", { class: "field", hidden },
       h("span", null, label),
       (() => {
@@ -668,17 +681,9 @@ async function seriesPage(params) {
       h("input", { type: "checkbox", checked: options[key], onchange: (e) => { options[key] = e.target.checked; save(); } }), label);
     const quality = h("input", { type: "number", min: "1", max: "100", value: String(options.jpegQuality),
       onchange: (e) => { options.jpegQuality = Math.min(100, Math.max(1, parseInt(e.target.value, 10) || 90)); e.target.value = options.jpegQuality; save(); } });
-    const preset = h("button", { class: "btn small", onclick: () => {
-      Object.assign(options, { format: "cbz", device: "kindle-pw3", fitMode: "smart", widepage: "split", autocrop: true, enhance: false });
-      save();
-      const fresh = optionsPanel();
-      fresh.open = true;
-      panel.replaceWith(fresh);
-      toast("Đã chọn cài đặt cho Kindle Paperwhite 3: truyện tải về sẽ có sẵn kích thước vừa màn hình");
-    } }, "Cài sẵn cho Kindle PW3");
     const panel = h("details", { class: "panel" },
       h("summary", null, "Tuỳ chọn tải xuống"),
-      h("p", { class: "muted small" }, "Chọn “Thiết bị đọc” trước khi tải thì ảnh được chỉnh ngay lúc tải, không cần tải xong rồi chuyển lại (không bị thêm bản sao, không bị xử lý hai lần). ", preset),
+      h("p", { class: "muted small" }, SHARED_NOTE),
       h("div", { class: "options" },
         sel("format", [["cbz", "CBZ (đa số app đọc truyện)"], ["mobi", "MOBI/AZW3 (Kindle)"]], "Định dạng"),
         sel("device", [["", "Không (giữ kích thước gốc)"], ...devices.map((d) => [d.id, d.name])], "Thiết bị đọc"),
@@ -1131,12 +1136,43 @@ function multiBlock(config, params) {
   const results = h("div");
   const detail = h("div");
   let currentTitle = "";
+  const extras = []; // series pasted by hand: [{source, id, title}]
+  const extrasBox = h("div", { class: "row small", style: "gap:.4rem;margin:.3rem 0;align-items:center" });
+  const pasteInput = h("input", { type: "url", placeholder: "Dán link truyện ở một nguồn (MangaDex hoặc website đã thêm ở tab Nguồn)", "aria-label": "Link truyện của một nguồn" });
+  function drawExtras() {
+    extrasBox.replaceChildren(...extras.map((m, i) => h("span", { class: "chip" }, `${m.source}: ${m.title} `,
+      h("button", { class: "btn small", type: "button", title: "Bỏ", onclick: () => { extras.splice(i, 1); drawExtras(); } }, "✕"))),
+      extras.length ? h("button", { class: "btn small primary", type: "button", onclick: (e) => { currentTitle = input.value.trim() || extras[0].title; chapters([], e.target); } }, "Xem chương từ các link đã dán") : null);
+  }
+  function addLink() {
+    const text = pasteInput.value.trim();
+    if (!text) return;
+    const dexId = seriesIdFromText(text);
+    let member;
+    if (dexId) member = { source: "mangadex", id: dexId, title: "MangaDex" };
+    else {
+      let host;
+      try { host = new URL(text).hostname.toLowerCase().replace(/^www\./, ""); } catch (_) { toast("Đó không phải một địa chỉ web", { bad: true }); return; }
+      const hosts = config.hosts || {};
+      const names = Object.keys(hosts).filter((n) => hosts[n] === host || host.endsWith("." + hosts[n]));
+      if (names.length === 0) { toast(`Chưa có nguồn nào cho website ${host}. Vào tab Nguồn, dán trang chủ của website đó để thêm.`, { bad: true }); return; }
+      member = { source: names[0], id: text, title: host };
+    }
+    if (!extras.some((m) => m.id === member.id)) extras.push(member);
+    pasteInput.value = "";
+    drawExtras();
+  }
+  const pasteBox = h("div", { style: "margin-top:.5rem" },
+    h("div", { class: "row", style: "align-items:center" }, h("div", { class: "grow" }, pasteInput), h("button", { class: "btn", type: "button", onclick: addLink }, "Thêm link")),
+    h("p", { class: "muted small", style: "margin:.25rem 0" }, "Dùng cho nguồn tìm không thấy hoặc không có ô tìm kiếm: dán link trang truyện, có thể dán nhiều link. Các link này được thêm vào mọi truyện bạn xem chương."),
+    extrasBox);
+  pasteInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addLink(); } });
   const go = h("button", { class: "btn primary", type: "submit" }, "Tìm ở tất cả nguồn");
   const form = h("form", { style: "display:flex;gap:.5rem;flex-wrap:wrap;align-items:center", onsubmit: (e) => { e.preventDefault(); search(); } },
     h("div", { style: "flex:1;min-width:14rem" }, input), lang, go);
   const root = h("div", { style: "margin-bottom:1rem" },
     h("p", { class: "muted" }, `Gõ tên truyện: tìm trong cả ${config.sources.length} nguồn (MangaDex và các nguồn của bạn) cùng lúc, gộp danh sách chương, cảnh báo chương còn thiếu rồi tải từ nhiều nguồn. Nguồn không có ô tìm kiếm sẽ bị bỏ qua: dán địa chỉ truyện của nguồn đó vào ô phía trên.`),
-    form, status, results, detail);
+    form, pasteBox, status, results, detail);
 
   async function search() {
     const text = input.value.trim();
@@ -1177,8 +1213,10 @@ function multiBlock(config, params) {
     return card;
   }
 
-  async function chapters(members, button) {
-    if (members.length === 0) { toast("Chọn ít nhất một nguồn", { bad: true }); return; }
+  async function chapters(picked, button) {
+    const members = [...picked];
+    for (const m of extras) if (!members.some((x) => x.id === m.id)) members.push(m);
+    if (members.length === 0) { toast("Chọn ít nhất một nguồn hoặc dán link truyện", { bad: true }); return; }
     button.disabled = true;
     const bar = progressBar();
     bar.set(null, `Đang lấy danh sách chương ở ${members.length} nguồn…`);
@@ -1255,20 +1293,22 @@ function multiBlock(config, params) {
     }
 
     // ----- the download itself -----
-    const opt = Object.assign({ device: "kindle-pw3", stripAds: true }, store.get("multiDownload", {}));
-    const kindle = h("input", { type: "checkbox", checked: !!opt.device, onchange: (e) => { opt.device = e.target.checked ? "kindle-pw3" : ""; store.set("multiDownload", opt); } });
-    const strip = h("input", { type: "checkbox", checked: opt.stripAds, onchange: (e) => { opt.stripAds = e.target.checked; store.set("multiDownload", opt); } });
+    const devices = config.devices || [];
+    const pick = (key, items, label) => h("label", { class: "field" }, h("span", null, label),
+      (() => { const el = h("select", { onchange: (e) => { reader[key] = e.target.value; saveReader(); } }, items.map(([v, t]) => h("option", { value: v }, t))); el.value = reader[key]; return el; })());
+    const tick = (key, label) => h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!reader[key], onchange: (e) => { reader[key] = e.target.checked; saveReader(); } }), label);
     const from = h("input", { type: "text", placeholder: "tất cả", style: "width:7rem", "aria-label": "Các chương cần tải" });
-    const perVol = h("input", { type: "number", min: "0", max: "1000", value: String(opt.perVolume ?? 10), style: "width:5rem", onchange: (e) => { opt.perVolume = Number(e.target.value) || 0; store.set("multiDownload", opt); } });
+    const perVol = h("input", { type: "number", min: "0", max: "1000", value: String(store.get("multiPerVolume", 10)), style: "width:5rem", onchange: (e) => store.set("multiPerVolume", Number(e.target.value) || 0) });
+    const ranges = h("input", { type: "text", placeholder: "vd 1:1-8, 2:9-17, 3:18-26", "aria-label": "Chia tập bằng tay" });
     const dl = h("button", { class: "btn primary", onclick: async () => {
       const index = Object.fromEntries(order.map((m, i) => [m.key, i]));
       const body = {
         lang: lang.value, format: "cbz",
         multi: { title, members: order.map((m) => ({ source: m.source, id: m.id, title: m.title })), choice: Object.fromEntries(Object.entries(choice).map(([n, k]) => [n, index[k]])),
-          chaptersPerVolume: hasDex ? 0 : Number(perVol.value) || 0 },
+          chaptersPerVolume: hasDex ? 0 : Number(perVol.value) || 0, volumeRanges: ranges.value.trim() },
         chapters: from.value.trim() || undefined,
-        device: kindle.checked ? "kindle-pw3" : undefined, fitMode: kindle.checked ? "smart" : undefined, widepage: kindle.checked ? "split" : undefined, autocrop: kindle.checked || undefined,
-        stripAds: strip.checked,
+        device: reader.device || undefined, fitMode: reader.device ? reader.fitMode : undefined, widepage: reader.widepage, autocrop: reader.autocrop || undefined,
+        enhance: reader.enhance || undefined, stripAds: !!reader.stripAds, rightToLeft: !reader.ltr,
       };
       dl.disabled = true;
       try {
@@ -1285,12 +1325,17 @@ function multiBlock(config, params) {
       t.others.length ? h("details", null, h("summary", null, `${t.others.length} chương không đánh số (đặc biệt, ngoại truyện…) — không được tải`),
         h("ul", { class: "small" }, t.others.map((o) => h("li", null, `${o.number} — ${o.sources.map((e) => e.source).join(", ")}`)))) : null,
       h("div", { class: "panel" },
+        h("strong", null, "Chia tập và cài đặt"),
+        h("p", { class: "muted small", style: "margin:.25rem 0" }, SHARED_NOTE),
         h("div", { class: "options" },
           h("label", { class: "field" }, h("span", null, "Chỉ tải các chương (vd 1-50, 55)"), from),
-          hasDex ? h("p", { class: "muted small" }, "Chia tập theo MangaDex.") : h("label", { class: "field" }, h("span", null, "Số chương mỗi tập (0 = giữ theo nguồn)"), perVol),
+          hasDex ? h("p", { class: "muted small" }, "Chia tập theo MangaDex (bìa từng tập cũng lấy ở đó).") : h("label", { class: "field" }, h("span", null, "Số chương mỗi tập (0 = giữ theo nguồn)"), perVol),
+          h("label", { class: "field" }, h("span", null, "Chia tập bằng tay (ưu tiên hơn mọi cách khác)"), ranges),
+          pick("device", [["", "Không (giữ kích thước gốc)"], ...devices.map((d) => [d.id, d.name])], "Thiết bị đọc"),
+          pick("fitMode", [["smart", "Phủ thông minh (khuyên dùng)"], ["fit", "Vừa khít, đệm trắng"], ["cover", "Cắt để phủ đầy"]], "Cách phủ màn hình"),
+          pick("widepage", [["preserve", "Giữ nguyên"], ["split", "Tách đôi"], ["preserve-and-split", "Giữ + tách đôi"], ["split-and-preserve", "Tách đôi + giữ"], ["rotate", "Xoay ngang"]], "Trang ngang"),
           h("div", { class: "field" }, h("span", null, "Khác"),
-            h("label", { class: "check" }, kindle, "Chỉnh sẵn cho Kindle PW3 (vừa màn hình, tách trang đôi)"),
-            h("label", { class: "check" }, strip, "Tự bỏ quảng cáo ở đầu/cuối chương"))),
+            tick("autocrop", "Tự cắt viền trắng"), tick("enhance", "Làm rõ cho màn e-ink"), tick("stripAds", "Tự bỏ quảng cáo ở đầu/cuối chương"))),
         h("div", { class: "row", style: "margin-top:.5rem" }, dl)));
   }
   if (params && params.get("q")) search();
@@ -1325,8 +1370,8 @@ async function libraryPage() {
   const downloads = downloadsSection(() => { finished.hidden = false; });
   const isConverted = (name) => { const m = /\s\[([^\]]+)\]$/.exec(name); return !!m && (m[1] === "converted" || (cfg.devices || []).some((d) => d.id === m[1])); };
   const cbzSeries = lib.filter((x) => x.files.some((f) => f.format === "cbz"));
-  const ks = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", enhance: false, autocrop: true }, store.get("kindle", {}));
-  const saveKs = () => store.set("kindle", ks);
+  const ks = reader;
+  const saveKs = saveReader;
   let stop = null; // set while an update runs: aborts it
   const cancelButton = h("button", { class: "btn danger small", hidden: true, onclick: () => stop && stop() }, "Dừng");
   const kp = kindlePanel();
@@ -1363,7 +1408,7 @@ async function libraryPage() {
     };
     return h("details", { class: "panel" },
       h("summary", null, "Chuyển truyện cho máy đọc (Kindle…)"),
-      h("p", { class: "muted small" }, "Chỉ dùng cho truyện ĐÃ tải về mà chưa chỉnh. Truyện mới nên chọn thiết bị ngay lúc tải (Tuỳ chọn tải xuống) để khỏi chuyển lại. Làm lại ảnh của các file CBZ cho vừa màn hình máy đọc (không cắt vào nội dung, đệm theo màu nền trang, làm rõ chữ trên màn e-ink). File gốc được giữ nguyên; bản chuyển lưu thành một truyện mới tên “… [mã thiết bị]”."),
+      h("p", { class: "muted small" }, SHARED_NOTE + " Làm lại ảnh của các file CBZ đã có cho vừa màn hình máy đọc (không cắt vào nội dung, đệm theo màu nền trang). File gốc được giữ nguyên; bản chuyển lưu thành một truyện mới tên “… [mã thiết bị]”."),
       h("div", { class: "options" },
         select("device", devices.map((d) => [d.id, d.name]), "Thiết bị đọc"),
         select("fitMode", [["smart", "Phủ thông minh (khuyên dùng)"], ["fit", "Vừa khít, đệm trắng"], ["cover", "Cắt để phủ đầy"]], "Cách phủ màn hình"),

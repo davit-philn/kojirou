@@ -2144,3 +2144,54 @@ func TestDownloadASeriesFromSeveralSourcesAtOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestMultiDownloadChaptersGoIntoTheVolumesGivenByHand(t *testing.T) {
+	e := newEnv(t, nil)
+	a := pageSite(t, 50, "1", "2", "3", "4")
+	cfg, _ := json.Marshal(map[string]any{"base_url": a.URL, "chapter_list_selector": ".c a", "image_list_selector": "#r img"})
+	if rec := e.do("POST", "/api/sources", map[string]any{"name": "one", "config": json.RawMessage(cfg)}); rec.Code != 200 {
+		t.Fatal(rec.Body)
+	}
+	body := map[string]any{"lang": "en", "format": "cbz", "multi": map[string]any{
+		"title": "Hand", "members": []map[string]string{{"source": "one", "id": a.URL + "/series"}}, "volumeRanges": "5:1-1, 6:2-4"}}
+	rec := e.do("POST", "/api/downloads", body)
+	if rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if done := waitFor(t, e, decode[JobInfo](t, rec).ID, "done", "failed"); done.State != "done" {
+		t.Fatalf("%+v", done)
+	}
+	lib := decode[[]LibrarySeries](t, e.do("GET", "/api/library", nil))
+	names := []string{}
+	for _, f := range lib[0].Files {
+		names = append(names, f.Name)
+	}
+	if strings.Join(names, ",") != "0005.cbz,0006.cbz" {
+		t.Errorf("files = %v, want volumes 5 and 6", names)
+	}
+	body["multi"].(map[string]any)["volumeRanges"] = "nonsense"
+	if rec := e.do("POST", "/api/downloads", body); rec.Code != 400 {
+		t.Errorf("bad ranges: %d, want 400", rec.Code)
+	}
+}
+
+func TestAPastedLinkFindsTheSourceWhoseWebsiteItIsOn(t *testing.T) {
+	e := newEnv(t, nil)
+	a := pageSite(t, 50, "1", "2")
+	b := pageSite(t, 200, "3", "4")
+	for name, site := range map[string]*httptest.Server{"one": a, "two": b} {
+		cfg, _ := json.Marshal(map[string]any{"base_url": site.URL, "chapter_list_selector": ".c a", "image_list_selector": "#r img"})
+		e.do("POST", "/api/sources", map[string]any{"name": name, "config": json.RawMessage(cfg)})
+	}
+	// The page names source "one" for both links, as it would when the sites share a host name.
+	members := []map[string]string{{"source": "one", "id": a.URL + "/series"}, {"source": "one #2", "id": b.URL + "/series"}}
+	out := decode[multiChaptersResult](t, e.do("POST", "/api/multi/chapters", map[string]any{"members": members, "lang": "en"}))
+	for _, m := range out.Members {
+		if m.Error != "" {
+			t.Errorf("%s: %s", m.Key, m.Error)
+		}
+	}
+	if out.Table.First != "1" || out.Table.Last != "4" {
+		t.Errorf("table = %+v", out.Table)
+	}
+}

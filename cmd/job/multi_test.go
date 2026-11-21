@@ -100,3 +100,24 @@ func TestOptionsValidateMultiSource(t *testing.T) {
 		}
 	}
 }
+
+func TestVolumeRangesPutChaptersIntoVolumesByHand(t *testing.T) {
+	vi := language.Vietnamese
+	chapters := md.ChapterList{chap("a1", "1", "9", vi), chap("a8", "8", "9", vi), chap("a9", "9", "9", vi), chap("a95", "9.5", "9", vi), chap("a20", "20", "9", vi)}
+	applyVolumeRanges(chapters, "1:1-8, 2:9-17; 3:18")
+	got := map[string]string{}
+	for _, c := range chapters {
+		got[c.Info.Identifier.String()] = c.Info.VolumeIdentifier.String()
+	}
+	if got["1"] != "1" || got["8"] != "1" || got["9"] != "2" || got["9.5"] != "2" || got["20"] != "9" {
+		t.Errorf("volumes = %v (chapter 20 is in no range and keeps its volume)", got)
+	}
+	for _, bad := range []string{"1-8", "x:1-8", "1:8-1", "1:a"} {
+		if _, err := parseVolumeRanges(bad); err == nil {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+	if err := (Options{Identifier: "x", Format: FormatCBZ, Multi: &MultiSource{Members: []MultiMember{{Name: "a", ID: "u"}}, VolumeRanges: "oops"}}).Validate(); err == nil {
+		t.Error("options with bad ranges must not validate")
+	}
+}

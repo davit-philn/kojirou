@@ -218,6 +218,9 @@ func getChapters(
 	}
 
 	applyVolumeOverrides(chapters, opts.VolumeOverrides)
+	if opts.Multi != nil {
+		applyVolumeRanges(chapters, opts.Multi.VolumeRanges)
+	}
 
 	if opts.Disk != "" {
 		p := rep.Task("Disk...", true)

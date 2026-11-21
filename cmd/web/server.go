@@ -615,6 +615,8 @@ type multiDownload struct {
 	// Choice names, per chapter number, the member (index) to use instead.
 	Choice            map[string]int `json:"choice"`
 	ChaptersPerVolume int            `json:"chaptersPerVolume"`
+	// VolumeRanges puts chapters into volumes by hand: "1:1-8, 2:9-17".
+	VolumeRanges string `json:"volumeRanges"`
 }
 
 var chapterRangePattern = regexp.MustCompile(`^[0-9.,\- ]{1,200}$`)
@@ -831,6 +833,10 @@ func (s *Server) optionsFromRequest(req downloadRequest) (job.Options, error) {
 		opts.StripAds = true
 		opts.AdStrips = s.ads.Get(key)
 		opts.OnAdStrips = func(found []adstrip.Strip) { _ = s.ads.Add(key, found) }
+	}
+
+	if err := opts.Validate(); err != nil {
+		return zero, err
 	}
 
 	return opts, nil

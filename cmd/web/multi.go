@@ -249,7 +249,7 @@ func (s *Server) memberChapters(ctx context.Context, m multiMemberOut, tag langu
 		}
 		return out, nil
 	}
-	cfg, ok, err := s.sources.Get(m.Source)
+	cfg, ok, err := s.sourceForURL(m.Source, m.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +289,10 @@ func (s *Server) resolveMulti(req downloadRequest) (*job.MultiSource, string, er
 	if m.ChaptersPerVolume < 0 || m.ChaptersPerVolume > 1000 {
 		return nil, "", errors.New("chapters per volume must be between 0 and 1000")
 	}
-	out := &job.MultiSource{Title: title, Choice: map[string]int{}, ChaptersPerVolume: m.ChaptersPerVolume}
+	if len(m.VolumeRanges) > 2000 {
+		return nil, "", errors.New("the volume ranges are too long")
+	}
+	out := &job.MultiSource{Title: title, Choice: map[string]int{}, ChaptersPerVolume: m.ChaptersPerVolume, VolumeRanges: m.VolumeRanges}
 	volumesFrom := ""
 	for _, mem := range m.Members {
 		member := job.MultiMember{Name: mem.Source, ID: mem.ID}
@@ -301,7 +304,7 @@ func (s *Server) resolveMulti(req downloadRequest) (*job.MultiSource, string, er
 				volumesFrom = mem.ID
 			}
 		} else {
-			cfg, ok, err := s.sources.Get(mem.Source)
+			cfg, ok, err := s.sourceForURL(mem.Source, mem.ID)
 			if err != nil {
 				return nil, "", err
 			}
@@ -330,4 +333,28 @@ func (s *Server) resolveMulti(req downloadRequest) (*job.MultiSource, string, er
 	}
 
 	return out, volumesFrom, nil
+}
+
+// sourceForURL finds the saved source for a series address: the named one if
+// the address is on its website, else any saved source whose website it is on
+// (two sources can share a website).
+func (s *Server) sourceForURL(name, address string) (selector.SourceConfig, bool, error) {
+	cfg, ok, err := s.sources.Get(name)
+	if err != nil {
+		return cfg, false, err
+	}
+	if ok && cfg.SameSite(address) {
+		return cfg, true, nil
+	}
+	list, err := s.sources.List()
+	if err != nil {
+		return cfg, false, err
+	}
+	for _, other := range list {
+		if other.Config.SameSite(address) {
+			return other.Config, true, nil
+		}
+	}
+
+	return cfg, ok, nil
 }

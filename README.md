@@ -388,3 +388,9 @@ Under the chapter table, **Tải truyện từ các nguồn này** downloads the
 The menu has three pages: **Tìm truyện** (search every source at once, paste a link, or browse one source), **Thư viện** (the queue of downloads is shown at the top while there is one, then the downloaded series) and **Nguồn** (your websites).
 
 The library keeps each series to one line: the cover, the name, **Chuyển cho Kindle**, a **Thêm ▾** menu (covers, advert cleaning, AZW3, copying to a reader, backups, rename, delete) and the list of volumes (folded away above three), each with **Xem trang**, **Tải về** and a **⋯** menu. Library-wide actions are under **Công cụ ▾**. The **Nguồn** page lists your websites (edit or delete), adds a new one from its home page, and keeps the manual settings, the selector help and the JSON paste under *Nâng cao*.
+
+### One profile for downloads and the library
+
+The reader settings (device, how the page fills the screen, wide pages, auto-crop, e-ink enhancement, advert cutting, reading direction) are one setting shared by the download of a single source, the download from several sources and **Chuyển cho Kindle** in the library. So a series is the same whether it is downloaded ready-made (set the device before downloading) or converted afterwards from the library.
+
+In **Tìm truyện** a link of a series can be pasted for a source the search did not find (or that has no search box); the pasted links join every series you open the chapters of. Under the chapter table you can also divide chapters into volumes by hand (`1:1-8, 2:9-17, 3:18-26`), which wins over MangaDex and over the chapters-per-volume count.

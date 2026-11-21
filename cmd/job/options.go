@@ -110,6 +110,9 @@ type Options struct {
 	KindleFolderMode bool
 }
 
+// Validate checks the settings without running anything.
+func (o Options) Validate() error { return o.validate() }
+
 func (o Options) validate() error {
 	switch o.Format {
 	case FormatMOBI, FormatCBZ:
@@ -144,6 +147,9 @@ func (o Options) validate() error {
 		}
 		if len(o.Multi.Members) == 0 {
 			return errors.New("several sources: no source given")
+		}
+		if _, err := parseVolumeRanges(o.Multi.VolumeRanges); err != nil {
+			return fmt.Errorf("several sources: volumes: %w", err)
 		}
 		for _, m := range o.Multi.Members {
 			if m.ID == "" || m.Name == "" {
