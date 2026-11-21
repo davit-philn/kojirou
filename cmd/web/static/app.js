@@ -1355,28 +1355,174 @@ async function libraryPage() {
     ? h("img", { class: cls, src: coverUrl(series, f.name), alt: "", loading: "lazy",
         onerror: (e) => { e.target.replaceWith(h("div", { class: cls + " none" }, "Không có bìa")); } })
     : h("div", { class: cls + " none" }, f.format.toUpperCase());
-  for (const series of lib) {
-    app.append(h("section", { class: "series-block lib-series" },
-      thumb(series.name, series.files[0], "lib-cover"),
-      h("div", { class: "lib-body" },
-        h("div", { class: "row", style: "align-items:center" },
-          h("h2", { style: "margin:0" }, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập)`)),
-          series.files.some((f) => f.format === "cbz")
-            ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
-          series.files.some((f) => f.format === "cbz") && !isConverted(series.name)
-            ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
-          series.files.some((f) => f.format === "cbz")
-            ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null),
-        series.files.some((f) => f.format === "cbz") ? inlineChooser(series) : null,
-        series.files.map((f) => h("div", { class: "file" },
-          thumb(series.name, f, "lib-thumb"),
-          h("span", { class: "name" }, f.name),
-          h("span", { class: "chip" }, f.format.toUpperCase()),
-          h("span", { class: "muted small" }, formatSize(f.size)),
-          h("span", { class: "muted small" }, formatDate(f.modified)),
-          h("a", { class: "btn small primary", download: "",
-            href: `/api/library/${encodeURIComponent(series.name)}/${encodeURIComponent(f.name)}` }, "Tải về"))))));
+  const hasCbz = (series) => series.files.some((f) => f.format === "cbz");
+  const total = (series) => series.files.reduce((n, f) => n + f.size, 0);
+  const newest = (series) => series.files.reduce((m, f) => (f.modified > m ? f.modified : m), "");
+  const call = async (path, body, okText) => {
+    try { const out = await api(path, { method: "POST", timeout: 600000, body }); if (okText) toast(okText(out)); return out; }
+    catch (err) { toast(err.message, { bad: true }); return null; }
+  };
+
+  // ----- viewing the pages of a file, choosing the ones to remove -----
+  function pagesPanel(series, f) {
+    const box = h("div", { class: "panel pages-panel" });
+    const grid = h("div", { class: "page-grid" });
+    const picked = new Set();
+    const stamp = Date.now();
+    const base = `/api/library/${encodeURIComponent(series.name)}/${encodeURIComponent(f.name)}`;
+    const info = h("span", { class: "muted small" }, "Đang đọc file…");
+    const remember = h("input", { type: "checkbox", checked: true });
+    const removeBtn = h("button", { class: "btn danger small", disabled: true }, "Xoá các trang đã chọn");
+    const update = () => {
+      removeBtn.disabled = picked.size === 0;
+      removeBtn.textContent = picked.size ? `Xoá ${picked.size} trang đã chọn` : "Xoá các trang đã chọn";
+    };
+    removeBtn.onclick = async () => {
+      const list = [...picked].sort((x, y) => x - y);
+      if (!confirm(`Xoá ${list.length} trang (${list.join(", ")}) khỏi ${f.name}?\nFile gốc được sao lưu để khôi phục lại.`)) return;
+      removeBtn.disabled = true;
+      const out = await call("/api/library/pages/remove", { series: series.name, file: f.name, pages: list, remember: remember.checked }, (o) => `Đã xoá ${o.removed} trang`);
+      if (out) {
+        if (remember.checked) toast("Đã nhớ hình các trang này. Bấm “Dọn quảng cáo” để xoá các trang giống thế ở tập khác.");
+        render();
+      } else removeBtn.disabled = false;
+    };
+    box.append(h("div", { class: "row", style: "align-items:center" }, h("strong", null, `${series.name} — ${f.name}`), info,
+      h("button", { class: "btn small", onclick: () => box.remove() }, "Đóng")),
+      h("p", { class: "muted small" }, "Bấm vào trang quảng cáo (hoặc trang thừa) để chọn, rồi bấm Xoá."),
+      grid,
+      h("div", { class: "row", style: "align-items:center;margin-top:.5rem" }, removeBtn,
+        h("label", { class: "check" }, remember, "Nhớ hình này, tìm cả các trang giống thế ở tập khác của truyện")));
+    api(base + "/pages").then((p) => {
+      info.textContent = `${p.count} trang${p.cover >= 0 ? ` · bìa là trang ${p.cover + 1}` : ""}`;
+      for (let i = 0; i < p.count; i++) {
+        const cell = h("button", { class: "page-cell", type: "button", title: `Trang ${i + 1}`, onclick: () => {
+          if (picked.has(i + 1)) picked.delete(i + 1); else picked.add(i + 1);
+          cell.classList.toggle("picked", picked.has(i + 1)); update();
+        } }, h("img", { src: `${base}/page/${i}?w=220&v=${stamp}`, alt: `Trang ${i + 1}`, loading: "lazy" }), h("span", null, String(i + 1)));
+        if (i === p.cover) cell.classList.add("cover");
+        grid.append(cell);
+      }
+    }).catch((err) => { info.textContent = err.message; });
+    return box;
   }
+
+  // ----- the files of one series (or of one Kindle copy) -----
+  function fileRows(series, host) {
+    return series.files.map((f) => {
+      const row = h("div", { class: "file" },
+        thumb(series.name, f, "lib-thumb"),
+        h("span", { class: "name" }, f.name, f.hasBackup ? h("span", { class: "chip", title: "Có bản sao lưu trước khi sửa" }, "có sao lưu") : null),
+        h("span", { class: "chip" }, f.format.toUpperCase()),
+        h("span", { class: "muted small" }, formatSize(f.size)),
+        h("span", { class: "muted small" }, formatDate(f.modified)),
+        f.format === "cbz" ? h("button", { class: "btn small", onclick: () => {
+          const open = host.querySelector(".pages-panel");
+          if (open) open.remove();
+          row.after(pagesPanel(series, f));
+        } }, "Xem trang") : null,
+        f.hasBackup ? h("button", { class: "btn small", title: "Trả file về như trước khi sửa", onclick: async () => {
+          if (!confirm(`Khôi phục ${f.name} về bản trước khi sửa?`)) return;
+          if (await call("/api/library/backup", { series: series.name, file: f.name, action: "restore" }, () => "Đã khôi phục")) render();
+        } }, "Khôi phục") : null,
+        h("button", { class: "btn small", onclick: async () => {
+          const name = prompt("Tên file mới", f.name.replace(/\.[^.]+$/, ""));
+          if (name && name.trim() && await call("/api/library/rename", { series: series.name, file: f.name, name: name.trim() }, () => "Đã đổi tên")) render();
+        } }, "Đổi tên"),
+        h("button", { class: "btn small danger", onclick: async () => {
+          if (!confirm(`Xoá ${f.name} (${formatSize(f.size)}) khỏi thư viện? Không thể hoàn tác.`)) return;
+          if (await call("/api/library/delete", { series: series.name, file: f.name }, () => "Đã xoá")) render();
+        } }, "Xoá"),
+        h("a", { class: "btn small primary", download: "", href: `/api/library/${encodeURIComponent(series.name)}/${encodeURIComponent(f.name)}` }, "Tải về"));
+      return row;
+    });
+  }
+
+  // ----- copying to a reader that is plugged in -----
+  function exportBox(series) {
+    const dest = h("input", { type: "text", placeholder: "Thư mục trên Kindle, vd E:\\documents", value: store.get("exportDest", ""), "aria-label": "Thư mục đích" });
+    const go = h("button", { class: "btn small primary", onclick: async () => {
+      const path = dest.value.trim();
+      if (!path) { toast("Nhập đường dẫn thư mục đích", { bad: true }); return; }
+      store.set("exportDest", path);
+      go.disabled = true;
+      const out = await call("/api/library/export", { series: series.name, dest: path }, (o) => `Đã chép ${o.done} file vào ${o.folder}`);
+      go.disabled = false;
+      if (out && (out.notes || []).length) toast(out.notes.join("; "), { bad: true });
+    } }, "Chép vào máy");
+    return h("details", { class: "panel" }, h("summary", null, "Chép sang máy đọc (Kindle, USB…)"),
+      h("div", { class: "row", style: "align-items:center" }, dest, go),
+      h("p", { class: "muted small" }, "Cắm máy vào máy tính, nhập thư mục (vd E:\\documents). Mỗi truyện được chép vào một thư mục con riêng."));
+  }
+
+  function seriesBlock(series, variants) {
+    const block = h("section", { class: "series-block lib-series" });
+    const body = h("div", { class: "lib-body" });
+    const backups = series.files.filter((f) => f.hasBackup).length;
+    const buttons = [
+      hasCbz(series) ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
+      hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
+      hasCbz(series) && !isConverted(series.name) ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null,
+      backups ? h("button", { class: "btn small", title: "Trả cả truyện về như trước khi sửa", onclick: async () => {
+        if (!confirm(`Khôi phục ${backups} file của “${series.name}” về bản trước khi sửa?`)) return;
+        if (await call("/api/library/backup", { series: series.name, action: "restore" }, (o) => `Đã khôi phục ${o.done} file`)) render();
+      } }, "Khôi phục bản gốc") : null,
+      backups ? h("button", { class: "btn small", title: "Xoá các bản sao lưu để lấy lại dung lượng", onclick: async () => {
+        if (!confirm("Xoá các bản sao lưu? Sau đó không khôi phục lại được nữa.")) return;
+        if (await call("/api/library/backup", { series: series.name, action: "discard" }, (o) => `Đã xoá ${o.done} bản sao lưu`)) render();
+      } }, "Xoá sao lưu") : null,
+      h("button", { class: "btn small", onclick: async () => {
+        const name = prompt("Tên truyện mới", series.name);
+        if (name && name.trim() && name.trim() !== series.name && await call("/api/library/rename", { series: series.name, name: name.trim() }, () => "Đã đổi tên")) render();
+      } }, "Đổi tên"),
+      h("button", { class: "btn small danger", onclick: async () => {
+        if (!confirm(`Xoá cả truyện “${series.name}” (${series.files.length} tập, ${formatSize(total(series))}) khỏi thư viện? Không thể hoàn tác.`)) return;
+        if (await call("/api/library/delete", { series: series.name }, (o) => `Đã xoá ${o.done} file, giải phóng ${formatSize(o.bytes)}`)) render();
+      } }, "Xoá truyện"),
+    ];
+    body.append(h("div", { class: "row", style: "align-items:center" },
+      h("h2", { style: "margin:0" }, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập · ${formatSize(total(series))})`)), ...buttons),
+      hasCbz(series) ? inlineChooser(series) : null,
+      ...fileRows(series, body),
+      hasCbz(series) ? exportBox(series) : null);
+    for (const v of variants || []) {
+      body.append(h("details", { class: "panel variant" },
+        h("summary", null, `Bản đã chuyển: ${v.name.slice(series.name.length + 1)} (${v.files.length} tập · ${formatSize(total(v))})`),
+        h("div", { class: "row", style: "margin:.4rem 0" },
+          h("button", { class: "btn small danger", onclick: async () => {
+            if (!confirm(`Xoá bản “${v.name}” (${formatSize(total(v))})? Truyện gốc vẫn còn.`)) return;
+            if (await call("/api/library/delete", { series: v.name }, (o) => `Đã xoá ${o.done} file`)) render();
+          } }, "Xoá bản này")),
+        ...fileRows(v, body), exportBox(v)));
+    }
+    block.append(thumb(series.name, series.files[0], "lib-cover"), body);
+    return block;
+  }
+
+  // ----- search, sort and the list itself -----
+  const view = Object.assign({ q: "", sort: "name" }, store.get("libraryView", {}));
+  const list = h("div");
+  const draw = () => {
+    store.set("libraryView", view);
+    const q = view.q.trim().toLowerCase();
+    // A converted copy is shown under its original when there is one.
+    const originals = new Set(lib.map((x) => x.name));
+    const variantsOf = (name) => lib.filter((x) => isConverted(x.name) && x.name.startsWith(name + " [") && x.name !== name);
+    const nested = new Set();
+    for (const x of lib) if (!isConverted(x.name)) for (const v of variantsOf(x.name)) nested.add(v.name);
+    let shown = lib.filter((x) => !nested.has(x.name) && (!q || x.name.toLowerCase().includes(q) || variantsOf(x.name).some((v) => v.name.toLowerCase().includes(q))));
+    const by = { name: (a, b) => a.name.localeCompare(b.name, "vi"), date: (a, b) => newest(b).localeCompare(newest(a)), size: (a, b) => total(b) - total(a) };
+    shown = shown.slice().sort(by[view.sort] || by.name);
+    list.replaceChildren(...(shown.length ? shown.map((x) => seriesBlock(x, originals.has(x.name) ? variantsOf(x.name) : [])) : [h("div", { class: "empty" }, "Không có truyện nào khớp.")]));
+  };
+  const search = h("input", { style: "flex:1;min-width:12rem;width:auto", type: "search", placeholder: "Tìm truyện trong thư viện…", value: view.q, "aria-label": "Tìm truyện", oninput: (e) => { view.q = e.target.value; draw(); } });
+  const sorter = h("select", { style: "width:auto", "aria-label": "Sắp xếp", onchange: (e) => { view.sort = e.target.value; draw(); } },
+    [["name", "Theo tên"], ["date", "Mới nhất trước"], ["size", "Nặng nhất trước"]].map(([v, t]) => h("option", { value: v }, t)));
+  sorter.value = view.sort;
+  const allBytes = lib.reduce((n, x) => n + total(x), 0);
+  app.append(h("div", { style: "display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.75rem 0" }, search, sorter,
+    h("span", { class: "muted small" }, `${lib.length} thư mục · ${formatSize(allBytes)}`)), list);
+  draw();
 }
 
 // ---------- sources ----------

@@ -239,6 +239,17 @@ func (s *Server) handleLibraryRename(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = os.Rename(filepath.Join(lib, backupDir, req.Series), filepath.Join(lib, backupDir, name))
+		// Its converted copies ("<name> [kindle-pw3]") follow, so that they stay together.
+		if all, err := scanLibrary(lib); err == nil && !isConvertedName(req.Series) {
+			for _, other := range all {
+				if isConvertedName(other.Name) && strings.HasPrefix(other.Name, req.Series+" [") {
+					renamed := name + strings.TrimPrefix(other.Name, req.Series)
+					if _, err := os.Stat(filepath.Join(lib, renamed)); err != nil {
+						_ = os.Rename(filepath.Join(lib, other.Name), filepath.Join(lib, renamed))
+					}
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"name": name})
 		return
 	}
