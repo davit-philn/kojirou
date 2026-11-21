@@ -107,7 +107,7 @@ func (s selectorSource) Covers(ctx context.Context, manga *md.Manga, _ formats.P
 	if s.coverURL == "" {
 		return md.ImageList{}, nil
 	}
-	img, err := s.Provider.SeriesCover(ctx, s.coverURL)
+	img, err := s.SeriesCover(ctx, s.coverURL)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

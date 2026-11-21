@@ -1110,7 +1110,7 @@ async function libraryPage() {
   const results = h("div", { class: "panel", hidden: true });
   const convertResults = h("div", { class: "panel", hidden: true });
   const adsResults = h("div", { class: "panel", hidden: true });
-  const isConverted = (name) => { const m = /\s\[([^\]]+)\]$/.exec(name); return !!m && (m[1] === "converted" || devices.some((d) => d.id === m[1])); };
+  const isConverted = (name) => { const m = /\s\[([^\]]+)\]$/.exec(name); return !!m && (m[1] === "converted" || (cfg.devices || []).some((d) => d.id === m[1])); };
   const cbzSeries = lib.filter((x) => x.files.some((f) => f.format === "cbz"));
   const ks = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", enhance: false, autocrop: true }, store.get("kindle", {}));
   const saveKs = () => store.set("kindle", ks);

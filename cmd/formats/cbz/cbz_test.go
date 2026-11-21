@@ -245,7 +245,7 @@ func TestSetCoverAddsACoverToAnArchiveWithoutOneAndFillsTheMetadata(t *testing.T
 	zw := zip.NewWriter(f)
 	for i := 0; i < 2; i++ {
 		w, _ := zw.Create(fmt.Sprintf("%05d.jpg", i))
-		_, _ = w.Write([]byte(fmt.Sprintf("page%d", i)))
+		_, _ = fmt.Fprintf(w, "page%d", i)
 	}
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)

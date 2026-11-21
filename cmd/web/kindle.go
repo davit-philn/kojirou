@@ -222,7 +222,7 @@ func (s *Server) handleLibraryConvert(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("choose a device or another setting to apply"))
 		return
 	}
-	opts, err := req.pageSettings.options()
+	opts, err := req.options()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

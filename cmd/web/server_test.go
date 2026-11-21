@@ -1141,7 +1141,7 @@ func writeComic(t *testing.T, path string, coverIndex int) {
 		}
 	}
 	w, _ := zw.Create("ComicInfo.xml")
-	fmt.Fprintf(w, `<ComicInfo><Pages><Page Image="0"/><Page Image="%d" Type="FrontCover"/></Pages></ComicInfo>`, coverIndex)
+	_, _ = fmt.Fprintf(w, `<ComicInfo><Pages><Page Image="0"/><Page Image="%d" Type="FrontCover"/></Pages></ComicInfo>`, coverIndex)
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}

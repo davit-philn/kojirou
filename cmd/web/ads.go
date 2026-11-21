@@ -1,11 +1,13 @@
 package web
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -190,6 +192,7 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 
 	// 1. Reduce every page of every file to what is needed to compare them.
 	var refs []pageRef
+	pageCounts := make([]int, len(files))
 	analysed := make([]*adstrip.Page, 0)
 	for fi, f := range files {
 		if err := ctx.Err(); err != nil {
@@ -197,12 +200,14 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 		}
 		report(fi, steps, "Đang quét "+f.Name)
 		path := filepath.Join(s.cfg.LibraryDir, req.Series, f.Name)
-		i := 0
-		if err := eachPage(path, func(img image.Image) {
+		if err := eachPage(path, func(i int, img image.Image) {
+			pageCounts[fi] = i + 1
+			if img == nil {
+				return
+			}
 			info := adstrip.Analyze(img)
 			refs = append(refs, pageRef{file: fi, page: i, info: info})
 			analysed = append(analysed, info)
-			i++
 		}); err != nil {
 			res.Notes = append(res.Notes, f.Name+": "+err.Error())
 		}
@@ -270,6 +275,18 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 			continue
 		}
 		cuts := hits[fi]
+		dropped := 0
+		for _, c := range cuts {
+			if c.Drop {
+				dropped++
+			}
+		}
+		// A real chapter has a few advertising pages at most; many more means a
+		// look-alike was taken for one, and pages must not be lost over that.
+		if dropped > 6 || dropped*3 > pageCounts[fi] {
+			res.Notes = append(res.Notes, fmt.Sprintf("%s: skipped, %d of %d pages would be removed, which is too many to be right", name, dropped, pageCounts[fi]))
+			continue
+		}
 		_, err := cbz.Rewrite(path,
 			func(i int) bool { return cuts[i].Drop },
 			func(i int) bool { c, ok := cuts[i]; return ok && !c.Drop },
@@ -288,18 +305,43 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 	return res, nil
 }
 
-// eachPage decodes the pictures of a CBZ in the order of their names.
-func eachPage(path string, f func(image.Image)) error {
-	n := 0
-	for {
-		img, err := readPage(path, n)
-		if err != nil {
-			if strings.Contains(err.Error(), "no such page") {
-				return nil
-			}
-			return err
-		}
-		f(img)
-		n++
+// eachPage decodes the pictures of a CBZ in the order of their names, opening
+// the archive once. A picture that cannot be decoded is passed as nil so that
+// the numbering of the others stays right.
+func eachPage(path string, f func(index int, img image.Image)) error {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return err
 	}
+	defer zr.Close() //nolint:errcheck
+	var pages []*zip.File
+	for _, file := range zr.File {
+		switch strings.ToLower(filepath.Ext(file.Name)) {
+		case ".jpg", ".jpeg", ".png", ".gif":
+			pages = append(pages, file)
+		}
+	}
+	sort.Slice(pages, func(i, j int) bool { return pages[i].Name < pages[j].Name })
+	for n, file := range pages {
+		f(n, decodeEntry(file))
+	}
+
+	return nil
+}
+
+func decodeEntry(file *zip.File) image.Image {
+	if file.UncompressedSize64 > maxCoverEntry {
+		return nil
+	}
+	rc, err := file.Open()
+	if err != nil {
+		return nil
+	}
+	defer rc.Close() //nolint:errcheck
+	img, _, err := image.Decode(io.LimitReader(rc, maxCoverEntry))
+	if err != nil {
+		return nil
+	}
+
+	return img
 }
