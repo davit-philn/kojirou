@@ -347,6 +347,12 @@ func detectPages(pages []*Page) []Strip {
 	return out
 }
 
+// WholePage makes a strip that stands for a whole page, for a page the user
+// pointed out as an advertisement.
+func WholePage(p *Page) Strip {
+	return Strip{Position: PageAd, Rows: p.Rows, Sig: append([]byte(nil), p.Pix...)}
+}
+
 // wholeMatch reports whether two pages are the same picture (at any size
 // that has the same shape).
 func wholeMatch(a, b *Page) bool {

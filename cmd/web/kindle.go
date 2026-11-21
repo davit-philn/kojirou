@@ -243,6 +243,10 @@ func (s *Server) handleLibraryConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isConvertedName(req.Series) {
+		writeError(w, http.StatusBadRequest, errors.New("this series is already a converted copy; convert the original instead"))
+		return
+	}
 	suffix := "converted"
 	if req.Device != "" {
 		suffix = req.Device
@@ -283,4 +287,19 @@ func (s *Server) handleLibraryConvert(w http.ResponseWriter, r *http.Request) {
 
 func deviceApply(img image.Image, o kindle.PageOptions) image.Image {
 	return device.Apply(img, o.Device)
+}
+
+// isConvertedName reports whether a library folder is a copy made by the
+// conversion, i.e. its name ends with " [<device id>]" or " [converted]".
+func isConvertedName(name string) bool {
+	i := strings.LastIndex(name, " [")
+	if i < 0 || !strings.HasSuffix(name, "]") {
+		return false
+	}
+	tag := name[i+2 : len(name)-1]
+	if tag == "converted" {
+		return true
+	}
+	_, ok := device.Lookup(tag)
+	return ok
 }

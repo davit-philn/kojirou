@@ -1056,6 +1056,7 @@ async function libraryPage() {
   const results = h("div", { class: "panel", hidden: true });
   const convertResults = h("div", { class: "panel", hidden: true });
   const adsResults = h("div", { class: "panel", hidden: true });
+  const isConverted = (name) => { const m = /\s\[([^\]]+)\]$/.exec(name); return !!m && (m[1] === "converted" || devices.some((d) => d.id === m[1])); };
   const cbzSeries = lib.filter((x) => x.files.some((f) => f.format === "cbz"));
   const ks = Object.assign({ device: "kindle-pw3", fitMode: "smart", widepage: "split", enhance: true, autocrop: true }, store.get("kindle", {}));
   const saveKs = () => store.set("kindle", ks);
@@ -1101,7 +1102,7 @@ async function libraryPage() {
       h("div", { class: "row", style: "margin-top:.75rem;align-items:flex-end" },
         h("label", { class: "field" }, h("span", null, "Xem trước truyện"), seriesSelect),
         h("button", { class: "btn", onclick: preview }, "Xem trước 4 trang đầu"),
-        h("button", { class: "btn primary", onclick: () => runConvert(cbzSeries) }, "Chuyển tất cả truyện")),
+        h("button", { class: "btn primary", onclick: () => runConvert(cbzSeries.filter((x) => !isConverted(x.name))) }, "Chuyển tất cả truyện")),
       previewOut);
   }
 
@@ -1122,10 +1123,26 @@ async function libraryPage() {
     status.textContent = "Xong. Kiểm tra ảnh trước/sau rồi bấm “Cắt quảng cáo” ở truyện nào đúng.";
   }
 
+  // A way to point at a page that is an advertisement when it cannot be found by itself (it is in one file only).
+  function markForm(series, box) {
+    const cbz = series.files.filter((f) => f.format === "cbz");
+    const file = h("select", { "aria-label": "Tập" }, cbz.map((f) => h("option", { value: f.name }, f.name)));
+    const page = h("input", { type: "number", min: "1", value: "1", style: "width:5rem", "aria-label": "Số trang" });
+    const go = h("button", { class: "btn small", onclick: async () => {
+      go.disabled = true;
+      try {
+        const out = await api("/api/library/ads", { method: "POST", timeout: 2500000, body: { series: series.name, markFile: file.value, markPage: Number(page.value) } });
+        box.replaceChildren(adsRow(series, out));
+      } catch (err) { go.disabled = false; toast(err.message, { bad: true }); }
+    } }, "Đánh dấu là quảng cáo");
+    return h("div", { class: "row small", style: "margin-top:.5rem;align-items:center" },
+      h("span", { class: "muted" }, "Còn sót trang quảng cáo? Chọn tập và số trang (đếm từ 1):"), file, page, go);
+  }
+
   function adsRow(series, res) {
     const box = h("div", { class: "notice", style: "margin:.5rem 0" });
     if (res.pages === 0) {
-      box.append(`${series.name}: không thấy quảng cáo nào.`);
+      box.append(`${series.name}: không thấy quảng cáo nào.`, markForm(series, box));
       return box;
     }
     const apply = h("button", { class: "btn primary small", onclick: async () => {
@@ -1140,7 +1157,8 @@ async function libraryPage() {
     box.append(h("strong", null, series.name), ` — thấy quảng cáo ở ${res.pages} trang của ${res.files.length} tập (${res.strips} kiểu${res.dropped ? `; ${res.dropped} trang là quảng cáo nguyên trang sẽ bị xoá, còn lại bị cắt dải` : ""}). Ảnh trang đầu tiên có quảng cáo, trước và sau:`,
       res.before ? h("div", { class: "preview-row" }, h("figure", null, h("img", { src: res.before, alt: "" }), h("figcaption", null, "Trước")),
         res.after ? h("figure", null, h("img", { src: res.after, alt: "" }), h("figcaption", null, "Sau")) : h("figure", null, h("figcaption", null, "Sau: trang này bị xoá"))) : null,
-      h("div", { class: "row" }, apply, h("span", { class: "muted small" }, "Chỉ các trang có quảng cáo bị làm lại; các trang khác giữ nguyên. Nên sao lưu thư viện nếu bạn lo lắng.")));
+      h("div", { class: "row" }, apply, h("span", { class: "muted small" }, "Chỉ các trang có quảng cáo bị làm lại; các trang khác giữ nguyên. Nên sao lưu thư viện nếu bạn lo lắng.")),
+      markForm(series, box));
     return box;
   }
 
@@ -1281,7 +1299,7 @@ async function libraryPage() {
           h("h2", { style: "margin:0" }, series.name, " ", h("span", { class: "muted small" }, `(${series.files.length} tập)`)),
           series.files.some((f) => f.format === "cbz")
             ? h("button", { class: "btn small", onclick: () => runUpdate([series]) }, "Cập nhật bìa") : null,
-          series.files.some((f) => f.format === "cbz")
+          series.files.some((f) => f.format === "cbz") && !isConverted(series.name)
             ? h("button", { class: "btn small", onclick: () => runConvert([series]) }, "Chuyển cho Kindle") : null,
           series.files.some((f) => f.format === "cbz")
             ? h("button", { class: "btn small", onclick: () => scanAds([series]) }, "Dọn quảng cáo") : null),

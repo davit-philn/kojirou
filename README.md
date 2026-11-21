@@ -235,7 +235,7 @@ In **Thư viện**, **Chuyển truyện cho máy đọc** does the same for file
 ## Cutting advertising strips and removing advertising pages
 
 Scanlation websites often add a banner to the top of a chapter's first page and another to the bottom of its last page (the same picture every time).
-For custom sources the download option **Tự cắt dải quảng cáo ở đầu/cuối chương** finds them by comparing the first and last pages of the chapters being downloaded: rows that look alike on several pages (compared at one width, so differently scaled copies still match) are a strip, and are cut off. Blank paper is never taken for a strip. The strips found are remembered per source in `ads.json` next to `sources.json`, so a later download of a single chapter is cleaned too. Sites also slip in whole advertising pages (a separate image, often of a different width, e.g. a banner of another site or a "visit our site" page): a page that looks like the same picture in several chapters, within the first or last 6 pages of a chapter, is dropped entirely. No OCR is used; pages are compared as pictures.
+For custom sources the download option **Tự cắt dải quảng cáo ở đầu/cuối chương** finds them by comparing the first and last pages of the chapters being downloaded: rows that look alike on several pages (compared at one width, so differently scaled copies still match) are a strip, and are cut off. Blank paper is never taken for a strip. The strips found are remembered per source in `ads.json` next to `sources.json`, so a later download of a single chapter is cleaned too. Sites also slip in whole advertising pages (a separate image, often of a different width, e.g. a banner of another site or a "visit our site" page): a page that looks like the same picture in several chapters, within the first or last 6 pages of a chapter, is dropped entirely. No OCR is used; pages are compared as pictures. An advert that appears in one file only cannot be found by comparison: in the scan result choose the file and page number and press **Đánh dấu là quảng cáo**; every page looking like it is then found and removed.
 In **Thư viện**, **Dọn quảng cáo** (per series, or for all) scans every page of the downloaded files, shows the first page with a strip before and after cutting, and cuts them when you press **Cắt quảng cáo**; only the pages with an advert are rewritten, and whole advertising pages are removed (the following pages are renumbered and ComicInfo.xml is updated).
 No text recognition (OCR) is used: it would need an extra program installed and is less reliable on banners printed over pictures than comparing the pictures.
 
@@ -354,3 +354,5 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 ## License
 
 [MIT](./LICENSE) © Leo Gaskin 2020-2026
+
+Converting for a device never converts a converted copy (folders named `… [kindle-pw3]`); "Chuyển tất cả truyện" skips them.

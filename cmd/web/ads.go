@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"net/http"
 	"os"
@@ -87,6 +88,11 @@ type adsRequest struct {
 	Series string `json:"series"`
 	// Apply cuts the strips; without it the library is only searched.
 	Apply bool `json:"apply"`
+	// MarkFile and MarkPage (counted from 1) point at a page that is an
+	// advertisement as a whole; it is remembered so that every page that looks
+	// like it is found.
+	MarkFile string `json:"markFile,omitempty"`
+	MarkPage int    `json:"markPage,omitempty"`
 }
 
 type adsFile struct {
@@ -161,6 +167,19 @@ func (s *Server) handleLibraryAds(w http.ResponseWriter, r *http.Request) {
 func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []LibraryFile) (*adsResult, error) {
 	res := &adsResult{Series: req.Series, Apply: req.Apply, Files: []adsFile{}, Notes: []string{}}
 	key := "series:" + req.Series
+
+	if req.MarkFile != "" && req.MarkPage > 0 {
+		if filepath.Base(req.MarkFile) != req.MarkFile {
+			return nil, errors.New("bad file name")
+		}
+		img, err := readPage(filepath.Join(s.cfg.LibraryDir, req.Series, req.MarkFile), req.MarkPage-1)
+		if err != nil {
+			return nil, fmt.Errorf("page %d of %s: %w", req.MarkPage, req.MarkFile, err)
+		}
+		if err := s.ads.Add(key, []adstrip.Strip{adstrip.WholePage(adstrip.Analyze(img))}); err != nil {
+			return nil, err
+		}
+	}
 
 	// 1. Reduce every page of every file to what is needed to compare them.
 	var refs []pageRef

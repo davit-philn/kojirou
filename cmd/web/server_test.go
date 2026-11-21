@@ -1663,3 +1663,68 @@ func TestWholeAdvertisingPagesAreRemovedFromALibrarySeries(t *testing.T) {
 		zr.Close() //nolint:errcheck
 	}
 }
+
+func TestConvertedCopiesAreNotConvertedAgain(t *testing.T) {
+	for name, want := range map[string]bool{
+		"Blue Lock [kindle-pw3]": true, "Blue Lock [converted]": true,
+		"Blue Lock": false, "Blue Lock [Digital]": false,
+	} {
+		if got := isConvertedName(name); got != want {
+			t.Errorf("isConvertedName(%q) = %v, want %v", name, got, want)
+		}
+	}
+	e := newEnv(t, nil)
+	dir := filepath.Join(e.library, "Blue Lock [kindle-pw3]")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := os.Create(filepath.Join(dir, "0001.cbz"))
+	zw := zip.NewWriter(f)
+	w, _ := zw.Create("00000.png")
+	_ = png.Encode(w, bannerPage(1, ""))
+	_ = zw.Close()
+	f.Close() //nolint:errcheck
+	if rec := e.do("POST", "/api/library/convert", map[string]any{"series": "Blue Lock [kindle-pw3]", "device": "kindle-pw3"}); rec.Code != 400 {
+		t.Errorf("converting a converted copy: status %d, want 400", rec.Code)
+	}
+}
+
+func TestAPageMarkedAsAnAdvertisementIsFoundAndRemoved(t *testing.T) {
+	e := newEnv(t, nil)
+	if err := os.MkdirAll(filepath.Join(e.library, "One"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(e.library, "One", "0001.cbz")
+	f, _ := os.Create(path)
+	zw := zip.NewWriter(f)
+	for i := 0; i < 3; i++ {
+		w, _ := zw.Create(fmt.Sprintf("%05d.png", i))
+		seed := i + 1
+		if i == 0 {
+			seed = 555
+		}
+		if err := png.Encode(w, bannerPage(seed, "")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = zw.Close()
+	f.Close() //nolint:errcheck
+	old := time.Now().Add(-time.Hour)
+	_ = os.Chtimes(path, old, old)
+
+	if res := decode[adsResult](t, e.do("POST", "/api/library/ads", map[string]any{"series": "One"})); res.Pages != 0 {
+		t.Fatalf("a single occurrence cannot be found by itself: %+v", res)
+	}
+	res := decode[adsResult](t, e.do("POST", "/api/library/ads", map[string]any{"series": "One", "markFile": "0001.cbz", "markPage": 1, "apply": true}))
+	if res.Dropped != 1 {
+		t.Fatalf("marked page: %+v", res)
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close() //nolint:errcheck
+	if len(zr.File) != 2 {
+		t.Errorf("%d pictures left, want 2", len(zr.File))
+	}
+}
