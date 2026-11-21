@@ -1755,3 +1755,35 @@ func TestLongLibraryOperationsReportProgress(t *testing.T) {
 		t.Errorf("unknown id: %+v", none)
 	}
 }
+
+func TestACoverRepeatedInEveryVolumeIsNotTakenForAnAdvertisement(t *testing.T) {
+	e := newEnv(t, nil)
+	if err := os.MkdirAll(filepath.Join(e.library, "Covers"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for c := 0; c < 3; c++ {
+		path := filepath.Join(e.library, "Covers", fmt.Sprintf("%04d.cbz", c+1))
+		f, _ := os.Create(path)
+		zw := zip.NewWriter(f)
+		for i := 0; i < 4; i++ {
+			seed := c*10 + i + 1
+			if i == 0 {
+				seed = 888 // the same cover in every file
+			}
+			w, _ := zw.Create(fmt.Sprintf("%05d.png", i))
+			if err := png.Encode(w, bannerPage(seed, "")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w, _ := zw.Create("ComicInfo.xml")
+		_, _ = w.Write([]byte(`<ComicInfo><Pages><Page Image="0" Type="FrontCover"/></Pages></ComicInfo>`))
+		_ = zw.Close()
+		f.Close() //nolint:errcheck
+		old := time.Now().Add(-time.Hour)
+		_ = os.Chtimes(path, old, old)
+	}
+	res := decode[adsResult](t, e.do("POST", "/api/library/ads", map[string]any{"series": "Covers"}))
+	if res.Pages != 0 || res.Dropped != 0 {
+		t.Fatalf("the cover was taken for an advertisement: %+v", res)
+	}
+}

@@ -44,9 +44,14 @@ func removeAdsCounted(images md.ImageList, known []adstrip.Strip, learned func([
 		}
 	}
 
+	chapterOf := map[any]int{}
+	for n, chapter := range order {
+		chapterOf[chapter] = n
+	}
 	pages := make([]*adstrip.Page, len(edge))
 	for i, at := range edge {
 		pages[i] = adstrip.Analyze(images[at].Image)
+		pages[i].Group = chapterOf[images[at].ChapterIdentifier]
 	}
 	strips := known
 	if found := adstrip.Detect(pages); len(found) > 0 {

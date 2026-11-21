@@ -179,3 +179,34 @@ func writeWithCover(
 
 	return zw.Close()
 }
+
+// CoverIndex returns the position (from 0) of the page ComicInfo.xml marks as
+// the front cover, or -1 if there is none.
+func CoverIndex(path string) int {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return -1
+	}
+	defer zr.Close() //nolint:errcheck
+	for _, f := range zr.File {
+		if f.Name != "ComicInfo.xml" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return -1
+		}
+		defer rc.Close() //nolint:errcheck
+		var info comicBookInfo
+		if xml.NewDecoder(io.LimitReader(rc, 1<<20)).Decode(&info) != nil {
+			return -1
+		}
+		for _, p := range info.Pages {
+			if p.Type == "FrontCover" {
+				return p.Image
+			}
+		}
+	}
+
+	return -1
+}

@@ -200,12 +200,14 @@ func (s *Server) cleanSeriesAds(ctx context.Context, req adsRequest, files []Lib
 		}
 		report(fi, steps, "Đang quét "+f.Name)
 		path := filepath.Join(s.cfg.LibraryDir, req.Series, f.Name)
+		cover := cbz.CoverIndex(path)
 		if err := eachPage(path, func(i int, img image.Image) {
 			pageCounts[fi] = i + 1
-			if img == nil {
+			if img == nil || i == cover { // the cover is never taken for an advert
 				return
 			}
 			info := adstrip.Analyze(img)
+			info.Group = fi
 			refs = append(refs, pageRef{file: fi, page: i, info: info})
 			analysed = append(analysed, info)
 		}); err != nil {

@@ -212,7 +212,11 @@ func TestWholeAdvertisingPagesAreFoundAndDropped(t *testing.T) {
 		adPage(800, 71), page(800, 1000, 0, 0, 1), page(800, 1000, 0, 0, 2), adPage(800, 72), // chapter 1
 		adPage(700, 71), page(700, 900, 0, 0, 3), page(700, 900, 0, 0, 4), adPage(700, 72), // chapter 2
 	}
-	strips := Detect(analyze(pages...))
+	analysed := analyze(pages...)
+	for i := range analysed {
+		analysed[i].Group = i / 4 // four pages to a chapter
+	}
+	strips := Detect(analysed)
 	whole := 0
 	for _, s := range strips {
 		if s.Position == PageAd {

@@ -98,6 +98,10 @@ type Page struct {
 	Pix []byte
 	// SourceWidth and SourceHeight are the picture's real size.
 	SourceWidth, SourceHeight int
+	// Group says which chapter or file the page comes from. A whole page is an
+	// advertisement only if it turns up in at least two groups: a picture
+	// repeated inside one file (a cover that was added) is not one.
+	Group int
 }
 
 // Analyze reduces a picture so that it can be compared with others.
@@ -317,8 +321,8 @@ func isPartOfAPage(s Strip, pages []Strip) bool {
 // detectPages finds whole pictures that occur on at least two of the pages.
 func detectPages(pages []*Page) []Strip {
 	type group struct {
-		ref     *Page
-		members int
+		ref    *Page
+		groups map[int]bool
 	}
 	var groups []*group
 	for _, p := range pages {
@@ -328,18 +332,18 @@ func detectPages(pages []*Page) []Strip {
 		placed := false
 		for _, g := range groups {
 			if wholeMatch(g.ref, p) {
-				g.members++
+				g.groups[p.Group] = true
 				placed = true
 				break
 			}
 		}
 		if !placed {
-			groups = append(groups, &group{ref: p, members: 1})
+			groups = append(groups, &group{ref: p, groups: map[int]bool{p.Group: true}})
 		}
 	}
 	var out []Strip
 	for _, g := range groups {
-		if g.members >= 2 && hasContent(g.ref.Pix, g.ref.Rows) {
+		if len(g.groups) >= 2 && hasContent(g.ref.Pix, g.ref.Rows) {
 			out = append(out, Strip{Position: PageAd, Rows: g.ref.Rows, Sig: append([]byte(nil), g.ref.Pix...)})
 		}
 	}
